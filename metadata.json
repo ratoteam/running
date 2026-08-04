@@ -1,0 +1,6 @@
+{
+  "name": "Rato Team Cadastro",
+  "description": "Formulário de cadastro responsivo e painel de controle.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
