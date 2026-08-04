@@ -331,7 +331,7 @@ export default function RegistrationPage() {
           </div>
           <Button 
             type="button" 
-            onClick={() => window.location.href = '/admin'}
+            onClick={() => navigate('/admin')}
             className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
           >
             Voltar ao Painel

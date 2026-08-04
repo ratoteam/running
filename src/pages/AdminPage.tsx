@@ -1452,7 +1452,10 @@ export default function AdminPage() {
                       <td className="p-3 font-bold">{r.tshirtSize || '-'}</td>
                       <td className="p-3 text-center flex items-center justify-center gap-2">
                         <button 
-                          onClick={() => window.open(`/?cpf=${r.cpf}&admin=true`, '_blank')}
+                          onClick={() => {
+                            const baseUrl = `${window.location.origin}${window.location.pathname.replace(/\/admin\/?$/, '/')}`;
+                            window.open(`${baseUrl}?cpf=${encodeURIComponent(r.cpf)}&admin=true`, '_blank');
+                          }}
                           className="text-neutral-500 hover:text-neutral-900 transition-colors p-1 rounded hover:bg-neutral-200"
                           title="Editar Cadastro"
                         >
