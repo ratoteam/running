@@ -5,8 +5,6 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(({ command }) => {
   return {
-    // Configura a base correta para o GitHub Pages quando em build de produção
-    base: command === 'build' ? '/running/' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
