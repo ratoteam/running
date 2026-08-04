@@ -9,7 +9,11 @@ export interface AppConfig {
   maxRegistrations: number;
   isAutoMax: boolean;
   isActive: boolean;
-  bannerUrl?: string;
+  topBannerUrl?: string;
+  topBannerEnabled?: boolean;
+  topBannerScale?: number;
+  topBannerPosition?: 'left' | 'center' | 'right';
+  topBannerFit?: 'cover' | 'contain';
   kits?: KitOption[];
   genders?: string[];
   modalities?: string[];
@@ -25,7 +29,6 @@ export interface AppConfig {
   pageTitleItalic?: boolean;
   pageSubtitleBold?: boolean;
   pageSubtitleItalic?: boolean;
-  headerBannerUrl?: string;
   whatsappGroupUrl?: string;
   allowAdminRegistration?: boolean;
 }

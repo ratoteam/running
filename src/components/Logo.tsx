@@ -7,8 +7,8 @@ export function Logo({ config = DEFAULT_CONFIG }: { config?: AppConfig }) {
     medio: 'text-5xl sm:text-6xl',
     grande: 'text-7xl sm:text-8xl',
   };
-
   const titleSizeClass = titleSizeMap[config.pageTitleSize || 'grande'] || titleSizeMap['grande'];
+
   const subtitleSizeMap = {
     pequeno: 'text-sm sm:text-base md:text-lg',
     medio: 'text-lg sm:text-xl md:text-2xl',
@@ -16,19 +16,34 @@ export function Logo({ config = DEFAULT_CONFIG }: { config?: AppConfig }) {
   };
   const subtitleSizeClass = subtitleSizeMap[config.pageSubtitleSize || 'medio'] || subtitleSizeMap['medio'];
 
+  const getObjectPosition = () => {
+    switch(config.topBannerPosition) {
+      case 'left': return 'left center';
+      case 'right': return 'right center';
+      case 'center': default: return 'center center';
+    }
+  };
+
+  const scale = config.topBannerScale ? config.topBannerScale / 100 : 1;
+
   return (
-    <div className="flex flex-col items-center justify-center w-full overflow-hidden bg-transparent py-6 sm:py-10 relative gap-6">
-      {config.headerBannerUrl && (
-        <div className="w-full max-w-4xl mx-auto rounded-xl overflow-hidden shadow-sm">
+    <div className="flex flex-col w-full overflow-hidden bg-transparent mb-8 relative gap-6">
+      {config.topBannerEnabled && config.topBannerUrl && (
+        <div className="w-full h-48 md:h-64 lg:h-72 relative shrink-0">
           <img 
-            src={config.headerBannerUrl} 
+            src={config.topBannerUrl} 
             alt="Banner do Evento" 
-            className="w-full h-auto object-cover"
+            className={`w-full h-full transition-transform duration-300 ${config.topBannerFit === 'contain' ? 'object-contain bg-transparent' : 'object-cover'}`}
+            style={{ 
+              objectPosition: getObjectPosition(),
+              transform: `scale(${scale})`
+            }}
             onError={(e) => { e.currentTarget.style.display = 'none' }} 
           />
         </div>
       )}
-      {(config.pageTitle || config.pageSubtitle) && (
+
+      {config.showHeader !== false && (config.pageTitle || config.pageSubtitle) && (
         <div className="flex flex-col items-center justify-center gap-2">
           {config.pageTitle && (
             <h1 

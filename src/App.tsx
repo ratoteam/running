@@ -2,10 +2,10 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+
 import RegistrationPage from './pages/RegistrationPage';
 import AdminPage from './pages/AdminPage';
 import SuccessPage from './pages/SuccessPage';

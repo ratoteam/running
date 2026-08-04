@@ -39,7 +39,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   maxRegistrations: 100,
   isAutoMax: true,
   isActive: true,
-  bannerUrl: "",
+  topBannerUrl: "",
+  topBannerEnabled: true,
+  topBannerScale: 100,
+  topBannerPosition: 'center',
   kits: [
     { name: "Kit Simples", imageUrl: "" },
     { name: "Kit Premium", imageUrl: "" }
@@ -58,7 +61,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   pageTitleItalic: false,
   pageSubtitleBold: false,
   pageSubtitleItalic: false,
-  headerBannerUrl: "",
   allowAdminRegistration: true
 };
 

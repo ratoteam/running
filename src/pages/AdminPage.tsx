@@ -31,7 +31,7 @@ export default function AdminPage() {
   const [newSizeName, setNewSizeName] = useState('');
   const [newSizeQty, setNewSizeQty] = useState('');
 
-  const [editBannerUrl, setEditBannerUrl] = useState('');
+  
   const [editKits, setEditKits] = useState<KitOption[]>([]);
   const [newKitName, setNewKitName] = useState('');
   const [newKitUrl, setNewKitUrl] = useState('');
@@ -39,12 +39,12 @@ export default function AdminPage() {
   const [newKitSizeQtys, setNewKitSizeQtys] = useState<Record<number, string>>({});
 
   const [isSignUp, setIsSignUp] = useState(false);
-  const [uploadingBanner, setUploadingBanner] = useState(false);
+  
   const [uploadingKitImage, setUploadingKitImage] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   
-  const [showBannerUrlInput, setShowBannerUrlInput] = useState(false);
+  
   const [showKitUrlInput, setShowKitUrlInput] = useState(false);
   const [showLogoUrlInput, setShowLogoUrlInput] = useState(false);
 
@@ -72,6 +72,38 @@ export default function AdminPage() {
     setCurrentPage(1);
   }, [filterKit, filterSize, filterGender, searchTerm, searchField]);
 
+
+  // Inactivity timeout logic (15 minutes)
+  useEffect(() => {
+    let inactivityTimer: NodeJS.Timeout;
+    
+    const resetTimer = () => {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      if (isAuthenticated) {
+        inactivityTimer = setTimeout(() => {
+          signOut(auth);
+          toast.info('Sessão expirada após 15 minutos de inatividade.');
+        }, 15 * 60 * 1000); // 15 minutes
+      }
+    };
+
+    if (isAuthenticated) {
+      resetTimer();
+      window.addEventListener('mousemove', resetTimer);
+      window.addEventListener('keydown', resetTimer);
+      window.addEventListener('click', resetTimer);
+      window.addEventListener('scroll', resetTimer);
+    }
+
+    return () => {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      window.removeEventListener('mousemove', resetTimer);
+      window.removeEventListener('keydown', resetTimer);
+      window.removeEventListener('click', resetTimer);
+      window.removeEventListener('scroll', resetTimer);
+    };
+  }, [isAuthenticated]);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -88,7 +120,7 @@ export default function AdminPage() {
     const unsubConfig = subscribeToConfig((cfg) => {
       setConfig(cfg);
       setEditSizes(cfg.tshirtSizes);
-      setEditBannerUrl(cfg.bannerUrl || '');
+      
       setEditKits(cfg.kits || []);
       setEditGenders(cfg.genders || []);
       setEditModalities(cfg.modalities || []);
@@ -336,7 +368,7 @@ export default function AdminPage() {
     if (!config) return;
     setSaveStatus('saving');
     try {
-      await updateConfig({ ...config, tshirtSizes: editSizes, bannerUrl: editBannerUrl, kits: editKits, genders: editGenders, modalities: editModalities });
+      await updateConfig({ ...config, tshirtSizes: editSizes, kits: editKits, genders: editGenders, modalities: editModalities });
       setSaveStatus('idle');
       toast.success('Configurações salvas com sucesso!');
     } catch (error) {
@@ -427,23 +459,7 @@ export default function AdminPage() {
     }
   };
 
-  const handleBannerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    setUploadingBanner(true);
-    try {
-      const storageRef = ref(storage, `banners/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-      setEditBannerUrl(url);
-    } catch (error) {
-      console.error('Erro ao fazer upload:', error);
-      alert('Erro ao enviar imagem.');
-    } finally {
-      setUploadingBanner(false);
-    }
-  };
+  
 
   const handleKitImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -463,23 +479,38 @@ export default function AdminPage() {
     }
   };
 
-  const handleHeaderBannerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  
+  const handleTopBannerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !config) return;
+    if (!file) return;
+
+    if (file.type !== 'image/jpeg' && file.type !== 'image/png' && file.type !== 'image/webp') {
+      toast.error('O banner deve ser uma imagem JPEG, PNG ou WEBP.');
+      return;
+    }
     
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('A imagem do banner não pode ser maior que 2MB.');
+      return;
+    }
+
     setUploadingLogo(true);
     try {
       const storageRef = ref(storage, `banners/${Date.now()}_${file.name}`);
       await uploadBytes(storageRef, file);
       const url = await getDownloadURL(storageRef);
-      setConfig({ ...config, headerBannerUrl: url });
-    } catch (error) {
-      console.error('Erro ao fazer upload:', error);
-      alert('Erro ao enviar imagem.');
+      setConfig({ ...config, topBannerUrl: url });
+      toast.success('Banner do topo carregado com sucesso!');
+    } catch (error: any) {
+      toast.error('Erro ao fazer upload do banner: ' + error.message);
     } finally {
       setUploadingLogo(false);
+      if (e.target) {
+        e.target.value = '';
+      }
     }
   };
+
 
   if (authLoading) return <div className="flex-1 flex items-center justify-center">Carregando painel...</div>;
 
@@ -571,7 +602,15 @@ export default function AdminPage() {
       const g = r.genero || 'Não informado';
       data[g] = (data[g] || 0) + 1;
     });
-    return Object.entries(data).map(([name, value]) => ({ name, value }));
+    const sizeOrder = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XGG', 'XXG', 'XXXG'];
+    return Object.entries(data).sort((a,b)=>{
+      const iA = sizeOrder.indexOf(a[0].toUpperCase());
+      const iB = sizeOrder.indexOf(b[0].toUpperCase());
+      if(iA !== -1 && iB !== -1) return iA - iB;
+      if(iA !== -1) return -1;
+      if(iB !== -1) return 1;
+      return a[0].localeCompare(b[0]);
+    }).map(([name, value]) => ({ name, value }));
   };
 
   const getKitData = () => {
@@ -602,7 +641,11 @@ export default function AdminPage() {
   } else {
     Object.keys(config?.tshirtSizes || {}).forEach(s => allSizes.add(s));
   }
-  const filterSizeOptions = Array.from(allSizes);
+  const filterSizeOptions = Array.from(allSizes).sort((a,b)=>{
+    const o=['PP','P','M','G','GG','XG','XGG','XXG','XXXG'];
+    const iA=o.indexOf(a.toUpperCase()),iB=o.indexOf(b.toUpperCase());
+    return iA!==-1&&iB!==-1?iA-iB:iA!==-1?-1:iB!==-1?1:a.localeCompare(b);
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -644,79 +687,87 @@ export default function AdminPage() {
           <div className="flex flex-col max-w-3xl mx-auto w-full gap-6">
             
               {/* Registration Control */}
-              <div className="bg-white p-6 rounded-lg shadow-sm border border-neutral-200 flex flex-col gap-4">
-                <h3 className="text-lg font-bold border-b pb-2">Configurações do Formulário</h3>
+              <div className="bg-white p-6 rounded-lg shadow-sm border border-neutral-200 flex flex-col gap-6">
+                <h3 className="text-lg font-bold border-b pb-2">Configurações Gerais</h3>
                 
-                <div className="flex items-center justify-between mt-4">
-                  <span className="font-medium">Status das inscrições</span>
-                  <Button 
-                    onClick={() => setConfig({ ...config, isActive: !config.isActive })}
-                    className={config.isActive ? 'bg-green-600 hover:bg-green-700 w-28' : 'bg-neutral-500 hover:bg-neutral-600 w-28'}
-                  >
-                    {config.isActive ? 'Ativado' : 'Desativado'}
-                  </Button>
-                </div>
-                <div className="flex items-center justify-between mt-4">
-                  <span className="font-medium">Permitir novos administradores</span>
-                  <Button 
-                    onClick={() => setConfig({ ...config, allowAdminRegistration: config.allowAdminRegistration === false ? true : false })}
-                    className={config.allowAdminRegistration !== false ? 'bg-green-600 hover:bg-green-700 w-28' : 'bg-neutral-500 hover:bg-neutral-600 w-28'}
-                  >
-                    {config.allowAdminRegistration !== false ? 'Ativado' : 'Desativado'}
-                  </Button>
-                </div>
-
-                <div className="flex flex-col gap-2 mt-4">
+                <div className="flex flex-col gap-4">
                   <div className="flex items-center justify-between">
-                    <span className="font-medium">Calcular limite automaticamente (Soma das camisetas)</span>
-                    <Button 
-                      onClick={() => setConfig({ ...config, isAutoMax: !config.isAutoMax })}
-                      className={config.isAutoMax ? 'bg-green-600 hover:bg-green-700 w-28' : 'bg-neutral-500 hover:bg-neutral-600 w-28'}
-                    >
-                      {config.isAutoMax ? 'Ativado' : 'Desativado'}
-                    </Button>
-                  </div>
-                  {!config.isAutoMax && (
-                    <div className="pl-6">
-                      <label className="block text-sm text-neutral-500 mb-1">Limite Manual de Vagas</label>
-                      <Input 
-                        type="number" 
-                        value={config.maxRegistrations || 0} 
-                        onChange={(e) => setConfig({ ...config, maxRegistrations: parseInt(e.target.value, 10) || 0 })}
-                      />
-                      <p className="text-xs text-neutral-400 mt-1">
-                        Com o limite manual, as quantidades definidas por tamanho acima serão ignoradas e os participantes poderão escolher qualquer tamanho até que o total de vagas se esgote.
-                      </p>
+                    <div>
+                      <span className="font-medium block text-sm">Status das inscrições</span>
+                      <span className="text-xs text-neutral-500">Ative ou desative o recebimento de novas inscrições.</span>
                     </div>
-                  )}
-                </div>
-                
-                <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-neutral-100">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">Habilitar campo PCD (Pessoa com Deficiência)</span>
-                    <Button 
-                      onClick={() => setConfig({ ...config, enablePCD: !config.enablePCD })}
-                      className={config.enablePCD ? 'bg-green-600 hover:bg-green-700 w-28' : 'bg-neutral-500 hover:bg-neutral-600 w-28'}
+                    <button 
+                      onClick={() => setConfig({ ...config, isActive: !config.isActive })}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.isActive ? 'bg-green-500' : 'bg-neutral-300'}`}
                     >
-                      {config.enablePCD ? 'Ativado' : 'Desativado'}
-                    </Button>
+                      <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.isActive ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </button>
                   </div>
-                  <p className="text-xs text-neutral-500">
-                    Se ativado, adicionará a pergunta "PCD?" com as opções "Sim" e "Não" no formulário de cadastro.
-                  </p>
-                </div>
+                  
+                  <div className="flex items-center justify-between border-t border-neutral-100 pt-4">
+                    <div>
+                      <span className="font-medium block text-sm">Permitir novos administradores</span>
+                      <span className="text-xs text-neutral-500">Permite que outras pessoas criem contas de administrador.</span>
+                    </div>
+                    <button 
+                      onClick={() => setConfig({ ...config, allowAdminRegistration: config.allowAdminRegistration === false ? true : false })}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.allowAdminRegistration !== false ? 'bg-green-500' : 'bg-neutral-300'}`}
+                    >
+                      <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.allowAdminRegistration !== false ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </button>
+                  </div>
 
-                <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-neutral-100">
-                  <label className="block font-medium">Link do Grupo do WhatsApp</label>
-                  <Input 
-                    type="url" 
-                    value={config.whatsappGroupUrl || ''} 
-                    placeholder="https://chat.whatsapp.com/..."
-                    onChange={(e) => setConfig({ ...config, whatsappGroupUrl: e.target.value })}
-                  />
-                  <p className="text-xs text-neutral-500">
-                    O usuário será redirecionado para este link (ou o verá na página de sucesso) após concluir a inscrição.
-                  </p>
+                  <div className="flex flex-col gap-3 border-t border-neutral-100 pt-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-medium block text-sm">Cálculo de vagas</span>
+                        <span className="text-xs text-neutral-500">Definir vagas pela soma das opções de tamanho (Automático).</span>
+                      </div>
+                      <button 
+                        onClick={() => setConfig({ ...config, isAutoMax: !config.isAutoMax })}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.isAutoMax ? 'bg-green-500' : 'bg-neutral-300'}`}
+                      >
+                        <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.isAutoMax ? 'translate-x-5' : 'translate-x-0'}`} />
+                      </button>
+                    </div>
+                    {!config.isAutoMax && (
+                      <div className="pl-4 border-l-2 border-neutral-200 ml-1 mt-2">
+                        <label className="block text-sm text-neutral-700 mb-1">Limite manual de inscritos</label>
+                        <Input 
+                          type="number" 
+                          value={config.maxRegistrations || 0} 
+                          onChange={(e) => setConfig({ ...config, maxRegistrations: parseInt(e.target.value, 10) || 0 })}
+                          className="w-32"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center justify-between border-t border-neutral-100 pt-4">
+                    <div>
+                      <span className="font-medium block text-sm">Campo PCD</span>
+                      <span className="text-xs text-neutral-500">Habilita a pergunta sobre deficiência no formulário.</span>
+                    </div>
+                    <button 
+                      onClick={() => setConfig({ ...config, enablePCD: !config.enablePCD })}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.enablePCD ? 'bg-green-500' : 'bg-neutral-300'}`}
+                    >
+                      <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.enablePCD ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col gap-2 border-t border-neutral-100 pt-4">
+                    <label className="block text-sm font-medium">Link do WhatsApp</label>
+                    <Input 
+                      type="url" 
+                      value={config.whatsappGroupUrl || ''} 
+                      placeholder="https://chat.whatsapp.com/..."
+                      onChange={(e) => setConfig({ ...config, whatsappGroupUrl: e.target.value })}
+                    />
+                    <p className="text-xs text-neutral-500">
+                      Opcional. Os inscritos serão redirecionados para este link ao concluir.
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -726,20 +777,22 @@ export default function AdminPage() {
                 
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-medium cursor-pointer">Exibir topo no formulário (Logotipo Principal)</span>
-                    <Button 
+                    <div>
+                      <span className="font-medium text-sm block">Exibir Título no formulário</span>
+                      <span className="text-xs text-neutral-500">Mostra o título e subtítulo no cabeçalho.</span>
+                    </div>
+                    <button 
                       onClick={() => setConfig({ ...config, showHeader: config.showHeader === false ? true : false })}
-                      className={config.showHeader !== false ? 'bg-green-600 hover:bg-green-700 w-28' : 'bg-neutral-500 hover:bg-neutral-600 w-28'}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.showHeader !== false ? 'bg-green-500' : 'bg-neutral-300'}`}
                     >
-                      {config.showHeader !== false ? 'Ativado' : 'Desativado'}
-                    </Button>
+                      <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.showHeader !== false ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </button>
                   </div>
                   <p className="text-xs text-neutral-500">
-                    Se desativado, a logo e o título no topo da página de cadastro serão ocultados. Ideal caso você utilize um banner que já contenha a identidade visual.
+                    Se desativado, o título no topo da página de cadastro será ocultado. O banner de imagem possui sua própria configuração separada abaixo.
                   </p>
 
-                  {config.showHeader !== false && (
-                    <div className="mt-4 flex flex-col gap-6">
+                  <div className="mt-4 flex flex-col gap-6">
                       
                       {/* Configuração de Título Simples */}
                       <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 mt-2 flex flex-col gap-6">
@@ -860,121 +913,115 @@ export default function AdminPage() {
 
                       </div>
 
-                      {/* Header Banner Upload Section */}
-                      <div>
-                        <label className="block text-sm font-medium mb-1">Imagem do Banner de Cabeçalho (Opcional - JPEG ou PNG)</label>
-                        <div className="flex items-center gap-2 mt-2">
-                          {config.headerBannerUrl && (
-                            <div className="flex items-center gap-2">
-                              <div 
-                                className="w-10 h-10 rounded border border-neutral-200 overflow-hidden flex items-center justify-center bg-neutral-50 flex-shrink-0 cursor-pointer"
-                                onClick={() => setPreviewImage(config.headerBannerUrl!)}
-                                title="Ver imagem"
-                              >
-                                <img src={config.headerBannerUrl} alt="Banner" className="w-full h-full object-cover p-1" onError={(e) => { e.currentTarget.style.display = 'none' }} />
-                              </div>
-                              <Button 
-                                type="button" 
-                                onClick={() => setConfig({ ...config, headerBannerUrl: '' })} 
-                                className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 p-2 h-10 w-10 flex-shrink-0"
-                                title="Remover banner"
-                              >
-                                <Trash2 size={18} />
-                              </Button>
-                            </div>
-                          )}
-                          
-                          {showLogoUrlInput ? (
-                            <div className="flex-1 flex items-center gap-2">
-                              <Input 
-                                type="text" 
-                                value={config.headerBannerUrl || ''} 
-                                placeholder="https://exemplo.com/banner.png"
-                                onChange={(e) => setConfig({ ...config, headerBannerUrl: e.target.value })}
-                                className="flex-1"
-                              />
-                              <Button type="button" onClick={() => setShowLogoUrlInput(false)} className="bg-green-600 hover:bg-green-700 px-3 h-10">
-                                <Check size={18} />
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex-1 flex items-center gap-2">
-                              <button type="button" onClick={() => setShowLogoUrlInput(true)} className="w-10 h-10 rounded-md hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center bg-white transition-colors" title="Inserir URL da imagem">
-                                <Link2 className="text-neutral-500" size={20} />
-                              </button>
-                              <input
-                                type="file"
-                                id="header-banner-upload"
-                                accept="image/jpeg, image/png"
-                                className="hidden"
-                                onChange={handleHeaderBannerUpload}
-                                disabled={uploadingLogo}
-                              />
-                              <label htmlFor="header-banner-upload" className="cursor-pointer w-10 h-10 rounded-md hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center bg-white transition-colors" title="Fazer upload de banner (JPEG/PNG)">
-                                {uploadingLogo ? <Loader2 className="animate-spin text-neutral-500" size={20} /> : <Upload className="text-neutral-500" size={20} />}
-                              </label>
-                            </div>
-                          )}
+                      
+                      {/* Top Banner Settings */}
+                      <div className="mt-6 pt-4 border-t border-neutral-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <label className="block text-sm font-medium">Banner do Topo da Página</label>
+                          </div>
+                          <button 
+                            type="button"
+                            onClick={() => setConfig({ ...config, topBannerEnabled: !config.topBannerEnabled })}
+                            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.topBannerEnabled ? 'bg-green-500' : 'bg-neutral-300'}`}
+                          >
+                            <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.topBannerEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                          </button>
                         </div>
+                        <p className="text-xs text-neutral-500 mb-4">
+                          Proporção ideal recomendada: 3:1 ou superior (ex: 1200x400 pixels). 
+                          A imagem se adaptará automaticamente de forma responsiva ao tamanho da tela.
+                        </p>
+                        
+                        <div className="flex flex-col gap-4 bg-neutral-50 p-4 rounded border border-neutral-200">
+                            <div className="flex flex-col gap-2">
+                              <label className="text-xs font-medium text-neutral-700">Imagem do Banner</label>
+                              <div className="flex items-center gap-2">
+                                {config.topBannerUrl && (
+                                  <div className="flex items-center gap-2">
+                                    <div 
+                                      className="w-16 h-10 rounded border border-neutral-200 overflow-hidden flex items-center justify-center bg-white flex-shrink-0 cursor-pointer"
+                                      onClick={() => setPreviewImage(config.topBannerUrl!)}
+                                      title="Ver imagem"
+                                    >
+                                      <img src={config.topBannerUrl} alt="Banner" className={`w-full h-full ${config.topBannerFit === 'contain' ? 'object-contain bg-transparent' : 'object-cover'}`} onError={(e) => { e.currentTarget.style.display = 'none' }} />
+                                    </div>
+                                    <Button 
+                                      type="button" 
+                                      onClick={() => setConfig({ ...config, topBannerUrl: '' })} 
+                                      className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 p-2 h-10 w-10 flex-shrink-0"
+                                      title="Remover banner"
+                                    >
+                                      <Trash2 size={18} />
+                                    </Button>
+                                  </div>
+                                )}
+                                <div className="flex-1 flex items-center gap-2">
+                                  {showLogoUrlInput ? (
+                                    <div className="flex-1 flex items-center gap-2">
+                                      <Input 
+                                        type="text" 
+                                        value={config.topBannerUrl || ''} 
+                                        placeholder="https://exemplo.com/banner.png"
+                                        onChange={(e) => setConfig({ ...config, topBannerUrl: e.target.value })}
+                                        className="flex-1 text-sm bg-white"
+                                      />
+                                      <Button type="button" onClick={() => setShowLogoUrlInput(false)} className="bg-green-600 hover:bg-green-700 px-3 h-10">
+                                        <Check size={18} />
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex-1 flex items-center gap-2">
+                                      <button type="button" onClick={() => setShowLogoUrlInput(true)} className="w-10 h-10 rounded-md hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center bg-white transition-colors" title="Inserir URL da imagem">
+                                        <Link2 className="text-neutral-500" size={18} />
+                                      </button>
+                                      <input
+                                        type="file"
+                                        id="top-banner-upload"
+                                        accept="image/jpeg, image/png, image/webp"
+                                        className="hidden"
+                                        onChange={handleTopBannerUpload}
+                                        disabled={uploadingLogo}
+                                      />
+                                      <label htmlFor="top-banner-upload" className="cursor-pointer w-10 h-10 rounded-md hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center bg-white transition-colors" title="Fazer upload de banner">
+                                        {uploadingLogo ? <Loader2 className="animate-spin text-neutral-500" size={18} /> : <Upload className="text-neutral-500" size={18} />}
+                                      </label>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                              <div className="flex flex-col gap-1">
+                                <label className="text-xs font-medium text-neutral-700">Ajuste da Imagem</label>
+                                <select 
+                                  className="flex h-9 w-full rounded-md border border-neutral-300 bg-white px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-400"
+                                  value={config.topBannerFit || 'cover'}
+                                  onChange={(e) => setConfig({ ...config, topBannerFit: e.target.value as any })}
+                                >
+                                  <option value="cover">Preencher todo o espaço (Cortar bordas se necessário)</option>
+                                  <option value="contain">Conter imagem (Ajustar automaticamente, sem cortes)</option>
+                                </select>
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <label className="text-xs font-medium text-neutral-700">Alinhamento Horizontal (se aplicável)</label>
+                                <select 
+                                  className="flex h-9 w-full rounded-md border border-neutral-300 bg-white px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-400"
+                                  value={config.topBannerPosition || 'center'}
+                                  onChange={(e) => setConfig({ ...config, topBannerPosition: e.target.value as any })}
+                                >
+                                  <option value="left">Esquerda</option>
+                                  <option value="center">Centro</option>
+                                  <option value="right">Direita</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        
                       </div>
                     </div>
-                  )}
-                </div>
-
-                <div className="mt-2 pt-4 border-t border-dashed border-neutral-200">
-                  <label className="block text-sm font-medium mb-1">Imagem do Banner Promocional</label>
-                  <div className="flex items-center gap-2 mt-2">
-                    {editBannerUrl && (
-                      <div className="flex items-center gap-2">
-                        <div 
-                          className="w-10 h-10 rounded border border-neutral-200 overflow-hidden flex items-center justify-center bg-neutral-50 flex-shrink-0 cursor-pointer"
-                          onClick={() => setPreviewImage(editBannerUrl)}
-                          title="Ver imagem"
-                        >
-                          <img src={editBannerUrl} alt="Banner thumb" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none' }} />
-                        </div>
-                        <Button 
-                          type="button" 
-                          onClick={() => setEditBannerUrl('')} 
-                          className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 p-2 h-10 w-10 flex-shrink-0"
-                          title="Remover banner"
-                        >
-                          <Trash2 size={18} />
-                        </Button>
-                      </div>
-                    )}
-                    {showBannerUrlInput ? (
-                      <div className="flex-1 flex items-center gap-2">
-                        <Input 
-                          value={editBannerUrl} 
-                          onChange={e => setEditBannerUrl(e.target.value)} 
-                          placeholder="URL da imagem..." 
-                          className="flex-1"
-                        />
-                        <Button type="button" onClick={() => setShowBannerUrlInput(false)} className="bg-green-600 hover:bg-green-700 px-3 h-10">
-                          <Check size={18} />
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex-1 flex items-center gap-2">
-                        <button type="button" onClick={() => setShowBannerUrlInput(true)} className="w-10 h-10 rounded-md hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center bg-white transition-colors" title="Inserir URL da imagem">
-                          <Link2 className="text-neutral-500" size={20} />
-                        </button>
-                        <input
-                          type="file"
-                          id="banner-upload"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={handleBannerUpload}
-                          disabled={uploadingBanner}
-                        />
-                        <label htmlFor="banner-upload" className="cursor-pointer w-10 h-10 rounded-md hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center bg-white transition-colors" title="Fazer upload de imagem">
-                          {uploadingBanner ? <Loader2 className="animate-spin text-neutral-500" size={20} /> : <Upload className="text-neutral-500" size={20} />}
-                        </label>
-                      </div>
-                    )}
-                  </div>
-                  <p className="text-xs text-neutral-500 mt-1">Será exibido abaixo do topo na página de cadastro.</p>
+                  
                 </div>
               </div>
 
@@ -984,8 +1031,8 @@ export default function AdminPage() {
                 <div className="flex flex-col gap-2">
                   {editGenders.map(g => (
                     <div key={g} className="flex items-center gap-2">
-                      <div className="flex-1 font-bold">{g}</div>
-                      <Button onClick={() => handleRemoveGender(g)} className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 p-2 h-auto">Remover</Button>
+                      <div className="flex-1">{g}</div>
+                      <button type="button" onClick={() => handleRemoveGender(g)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 h-auto rounded-full bg-transparent transition-colors" title="Remover"><Trash2 size={18} /></button>
                     </div>
                   ))}
                   {editGenders.length === 0 && (
@@ -1009,8 +1056,8 @@ export default function AdminPage() {
                 <div className="flex flex-col gap-2">
                   {editModalities.map(m => (
                     <div key={m} className="flex items-center gap-2">
-                      <div className="flex-1 font-bold">{m}</div>
-                      <Button onClick={() => handleRemoveModality(m)} className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 p-2 h-auto">Remover</Button>
+                      <div className="flex-1">{m}</div>
+                      <button type="button" onClick={() => handleRemoveModality(m)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 h-auto rounded-full bg-transparent transition-colors" title="Remover"><Trash2 size={18} /></button>
                     </div>
                   ))}
                   {editModalities.length === 0 && (
@@ -1118,25 +1165,29 @@ export default function AdminPage() {
                                <ImageIcon className="text-neutral-400" size={18} />
                             </div>
                           )}
-                          <span className="font-bold text-lg">{kit.name}</span>
+                          <span className="text-lg">{kit.name}</span>
                         </div>
-                        <Button onClick={() => handleRemoveKit(idx)} className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 py-1.5 px-3 h-auto">Remover Kit</Button>
+                        <button type="button" onClick={() => handleRemoveKit(idx)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 h-auto rounded-full bg-transparent transition-colors" title="Remover Kit"><Trash2 size={20} /></button>
                       </div>
                       
                       {/* T-Shirt Config for this Kit */}
                       <div className="bg-neutral-50 p-4 rounded-md border border-neutral-200">
                         <h4 className="text-sm font-bold text-neutral-700 mb-3">Tamanhos e Estoque deste Kit</h4>
                         <div className="flex flex-col gap-2">
-                          {Object.entries(kit.tshirtSizes || {}).map(([size, qty]) => (
+                          {Object.entries(kit.tshirtSizes || {}).sort((a,b)=>{
+                            const o=['PP','P','M','G','GG','XG','XGG','XXG','XXXG'];
+                            const iA=o.indexOf(a[0].toUpperCase()),iB=o.indexOf(b[0].toUpperCase());
+                            return iA!==-1&&iB!==-1?iA-iB:iA!==-1?-1:iB!==-1?1:a[0].localeCompare(b[0]);
+                          }).map(([size, qty]) => (
                             <div key={size} className="flex items-center gap-2">
-                              <div className="w-16 font-bold text-sm">{size}</div>
+                              <div className="w-16 text-sm">{size}</div>
                               <Input 
                                 type="number" 
                                 value={qty || 0} 
                                 className="w-24 h-8 text-sm"
                                 onChange={(e) => handleUpdateKitSizeQty(idx, size, parseInt(e.target.value, 10) || 0)}
                               />
-                              <Button onClick={() => handleRemoveKitSize(idx, size)} className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 p-1.5 h-auto text-xs">Remover</Button>
+                              <button type="button" onClick={() => handleRemoveKitSize(idx, size)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 h-auto rounded-full bg-transparent transition-colors" title="Remover"><Trash2 size={16} /></button>
                             </div>
                           ))}
                           {Object.keys(kit.tshirtSizes || {}).length === 0 && (
@@ -1176,16 +1227,20 @@ export default function AdminPage() {
                 <h3 className="text-lg font-bold border-b pb-2">Tamanhos e Estoque de Camisetas (Global)</h3>
                 
                 <div className="flex flex-col gap-2">
-                  {Object.entries(editSizes).map(([size, qty]) => (
+                  {Object.entries(editSizes).sort((a,b)=>{
+                    const o=['PP','P','M','G','GG','XG','XGG','XXG','XXXG'];
+                    const iA=o.indexOf(a[0].toUpperCase()),iB=o.indexOf(b[0].toUpperCase());
+                    return iA!==-1&&iB!==-1?iA-iB:iA!==-1?-1:iB!==-1?1:a[0].localeCompare(b[0]);
+                  }).map(([size, qty]) => (
                     <div key={size} className="flex items-center gap-2">
-                      <div className="w-16 font-bold">{size}</div>
+                      <div className="w-16">{size}</div>
                       <Input 
                         type="number" 
                         value={qty || 0} 
                         className="w-24"
                         onChange={(e) => setEditSizes({ ...editSizes, [size]: parseInt(e.target.value, 10) || 0 })}
                       />
-                      <Button onClick={() => handleRemoveSize(size)} className="bg-red-100 text-red-600 hover:bg-red-200 p-2">Remover</Button>
+                      <button type="button" onClick={() => handleRemoveSize(size)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 h-auto rounded-full bg-transparent transition-colors" title="Remover"><Trash2 size={18} /></button>
                     </div>
                   ))}
                   {Object.keys(editSizes).length === 0 && (

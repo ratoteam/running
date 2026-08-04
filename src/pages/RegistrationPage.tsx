@@ -122,7 +122,7 @@ export default function RegistrationPage() {
     pcd: ''
   };
 
-  const { register, handleSubmit, watch, setValue, reset, formState: { errors, isDirty, isValid } } = useForm<FormValues>({
+  const { register, handleSubmit, watch, setValue, reset, control, formState: { errors, isDirty, isValid } } = useForm<FormValues>({
     mode: 'onChange',
     defaultValues
   });
@@ -251,7 +251,15 @@ export default function RegistrationPage() {
       sizesObj = config.tshirtSizes || {};
     }
 
-    const sizes = Object.keys(sizesObj);
+    const sizeOrder = ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XGG', 'XXG', 'XXXG'];
+    const sizes = Object.keys(sizesObj).sort((a, b) => {
+      const indexA = sizeOrder.indexOf(a.toUpperCase());
+      const indexB = sizeOrder.indexOf(b.toUpperCase());
+      if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+      if (indexA !== -1) return -1;
+      if (indexB !== -1) return 1;
+      return a.localeCompare(b);
+    });
     return sizes.map(size => {
       const taken = registrations.filter(r => 
         r.tshirtSize === size && (!kitMode || r.kit === selectedKit)
@@ -289,54 +297,70 @@ export default function RegistrationPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {(config.showHeader !== false) && <Logo config={config} />}
+      <Logo config={config} />
       
-      {config.bannerUrl && (
-        <div className={`w-full flex justify-center ${config.showHeader !== false ? 'mb-2' : 'mb-6 mt-4'}`}>
-          <img 
-            src={config.bannerUrl} 
-            alt="Banner Rato Team" 
-            className="w-full max-w-4xl h-auto rounded-lg shadow-sm"
-            onError={(e) => { e.currentTarget.style.display = 'none' }}
-          />
-        </div>
-      )}
       
       {/* Counters Panel */}
-      <div className="bg-white p-6 rounded-lg shadow-sm border border-neutral-200 text-center">
+      <div className="bg-white p-6 rounded-lg shadow-sm border border-neutral-200 text-center flex flex-col items-center">
         <h2 className="text-2xl font-bold mb-4 uppercase tracking-tight">Status das Vagas</h2>
-        <div className="text-4xl font-bold text-neutral-900">
-          {isEsgotado ? <span className="text-red-600">ESGOTADO</span> : vagasRestantes}
-          {!isEsgotado && <span className="text-base text-neutral-500 font-normal ml-2 tracking-normal">Vagas Totais Disponíveis</span>}
+        <div className="flex flex-col items-center justify-center">
+          <div className="text-6xl font-bold text-neutral-900 leading-none">
+            {isEsgotado ? <span className="text-red-600 text-4xl">ESGOTADO</span> : vagasRestantes}
+          </div>
+          {!isEsgotado && (
+            <div className="text-sm text-neutral-500 font-medium mt-2">
+              Totais disponíveis.
+            </div>
+          )}
         </div>
+        {config.maxRegistrations > 0 && !config.isAutoMax && (
+          <div className="w-full max-w-md bg-neutral-100 rounded-full h-3 mt-6 overflow-hidden border border-neutral-200">
+            <div 
+              className="bg-neutral-900 h-3 rounded-full transition-all duration-1000 ease-out" 
+              style={{ width: `${Math.min(100, Math.max(0, (registrations.length / config.maxRegistrations) * 100))}` + '%' }}
+            ></div>
+          </div>
+        )}
       </div>
 
+      {isAdminAction && (
+        <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h3 className="font-bold text-blue-800">Modo Administrador</h3>
+            <p className="text-sm text-blue-600">Você está editando o cadastro de: <strong>{isAdminAction}</strong></p>
+          </div>
+          <Button 
+            type="button" 
+            onClick={() => window.location.href = '/admin'}
+            className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
+          >
+            Voltar ao Painel
+          </Button>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit(onSubmit, onErrors)} className="flex flex-col gap-6">
-        <input type="hidden" {...register("id")} />
-        
-        {/* Seção 1: Dados Pessoais */}
         <div className="bg-white p-6 md:p-8 rounded-lg shadow-sm border border-neutral-200">
-          <h3 className="text-lg font-bold text-neutral-800 mb-5 pb-2 border-b border-neutral-100 flex items-center gap-2">
-            <span className="bg-neutral-900 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm">1</span>
-            Dados Pessoais
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+          <h2 className="text-xl font-bold mb-6 border-b pb-2">Dados Pessoais</h2>
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
             <div className="md:col-span-4">
-              <label className="block text-sm font-medium mb-1.5 text-neutral-700">CPF</label>
-              <Input 
-                {...(() => {
-                  const { onChange, ...rest } = register('cpf', { required: true });
-                  return {
-                    ...rest,
-                    onChange: (e) => {
+              <label className="block text-sm font-medium mb-1 text-neutral-700">CPF <span className="text-red-500">*</span></label>
+              <Controller
+                name="cpf"
+                control={control}
+                rules={{ required: true, pattern: /^\d{3}\.\d{3}\.\d{3}-\d{2}$/ }}
+                render={({ field: { onChange, ...rest } }) => (
+                  <Input 
+                    {...rest}
+                    onChange={(e) => {
                       e.target.value = maskCPF(e.target.value);
                       onChange(e);
-                    }
-                  };
-                })()} 
-                placeholder="000.000.000-00" 
-                maxLength={14}
-                disabled={isEsgotado || submitting} 
+                    }}
+                    placeholder="000.000.000-00" 
+                    maxLength={14}
+                    disabled={isEsgotado || submitting} 
+                  />
+                )}
               />
               <p className="text-xs text-neutral-500 mt-1">Apenas números</p>
             </div>
