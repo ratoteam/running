@@ -1606,7 +1606,18 @@ export default function AdminPage() {
                           <Edit size={16} />
                         </button>
                         <button 
-                          onClick={() => handleDeleteIndividual(r.id!)}
+                          onClick={() => {
+                            const canDelete = currentAdminUser?.role === 'master' || currentAdminUser?.permissions?.canDeleteRegistrations;
+                            if (!canDelete) {
+                              toast.error('Você não tem permissão para excluir inscritos.');
+                              return;
+                            }
+                            if (r.id) {
+                              handleDeleteIndividual(r.id);
+                            } else {
+                              toast.error('ID do cadastro não encontrado.');
+                            }
+                          }}
                           className="text-red-400 hover:text-red-600 transition-colors p-1 rounded hover:bg-red-50"
                           title="Excluir Cadastro"
                         >

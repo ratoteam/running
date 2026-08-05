@@ -104,7 +104,7 @@ export function subscribeToConfig(callback: (config: AppConfig) => void) {
 
 export function subscribeToRegistrations(callback: (regs: Registration[]) => void) {
   return onSnapshot(collection(db, REGISTRATIONS_COL), (snapshot) => {
-    const regs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
+    const regs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Registration));
     callback(regs);
   });
 }
@@ -114,7 +114,7 @@ export async function getRegistrationByCpf(cpf: string): Promise<Registration | 
   const snapshot = await getDocs(q);
   if (!snapshot.empty) {
     const doc = snapshot.docs[0];
-    return { id: doc.id, ...doc.data() } as Registration;
+    return { ...doc.data(), id: doc.id } as Registration;
   }
   return null;
 }
@@ -127,7 +127,7 @@ export async function submitRegistration(data: Omit<Registration, 'isAdmin' | 'c
     }
 
     const snapshot = await getDocs(collection(db, REGISTRATIONS_COL));
-    const allRegs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
+    const allRegs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Registration));
     
     let maxAllowed = config.maxRegistrations;
     if (config.isAutoMax) {
@@ -174,6 +174,9 @@ export async function submitRegistration(data: Omit<Registration, 'isAdmin' | 'c
 
 export async function deleteRegistration(id: string): Promise<{ success: boolean; message: string }> {
   try {
+    if (!id) {
+      return { success: false, message: "ID do cadastro não informado." };
+    }
     const ref = doc(db, REGISTRATIONS_COL, id);
     await deleteDoc(ref);
     return { success: true, message: "Cadastro excluído com sucesso." };
@@ -188,7 +191,7 @@ export async function getAdminUser(uid: string): Promise<AdminUser | null> {
     const userRef = doc(db, ADMIN_USERS_COL, uid);
     const snapshot = await getDoc(userRef);
     if (snapshot.exists()) {
-      return { uid: snapshot.id, ...snapshot.data() } as AdminUser;
+      return { ...snapshot.data(), uid: snapshot.id } as AdminUser;
     }
     return null;
   } catch (error) {
@@ -202,7 +205,7 @@ export async function ensureAdminUserRecord(uid: string, email: string): Promise
   const snapshot = await getDoc(userRef);
 
   if (snapshot.exists()) {
-    return { uid: snapshot.id, ...snapshot.data() } as AdminUser;
+    return { ...snapshot.data(), uid: snapshot.id } as AdminUser;
   }
 
   const allAdminsSnapshot = await getDocs(collection(db, ADMIN_USERS_COL));
@@ -227,7 +230,7 @@ export async function ensureAdminUserRecord(uid: string, email: string): Promise
 
 export function subscribeToAdminUsers(callback: (users: AdminUser[]) => void) {
   return onSnapshot(collection(db, ADMIN_USERS_COL), (snapshot) => {
-    const users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as AdminUser));
+    const users = snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id } as AdminUser));
     callback(users);
   });
 }
