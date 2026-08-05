@@ -63,6 +63,7 @@ export default function RegistrationPage() {
   const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [isAdminSignUp, setIsAdminSignUp] = useState(false);
   const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -600,10 +601,27 @@ export default function RegistrationPage() {
           </div>
         </div>
 
+        {!isAdminAction && (
+          <div className="bg-neutral-50 p-4 rounded-lg border border-neutral-200 flex flex-col gap-2">
+            <span className="text-sm font-bold text-neutral-900">Declaração:</span>
+            <label className="flex items-start gap-3 cursor-pointer select-none">
+              <input 
+                type="checkbox" 
+                checked={acceptedTerms}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                className="mt-0.5 w-5 h-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900 cursor-pointer shrink-0"
+              />
+              <span className="text-sm text-neutral-700 leading-snug">
+                Declaro que estou apto fisicamente, estando de acordo com o regulamento para participar do evento.
+              </span>
+            </label>
+          </div>
+        )}
+
         <Button 
           type="submit" 
-          className="w-full mt-2 h-14 text-lg font-bold tracking-wide uppercase transition-all shadow-md hover:shadow-lg" 
-          disabled={isEsgotado || submitting || cpfExists}
+          className="w-full mt-2 h-14 text-lg font-bold tracking-wide uppercase transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed" 
+          disabled={isEsgotado || submitting || cpfExists || (!isAdminAction && !acceptedTerms)}
         >
           {submitting ? 'Processando...' : isEsgotado ? 'Inscrições Encerradas' : cpfExists ? 'Cadastro Já Realizado' : isAdminAction ? 'Salvar Alterações' : 'Confirmar Inscrição'}
         </Button>
