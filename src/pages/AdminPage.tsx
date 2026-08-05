@@ -287,6 +287,10 @@ export default function AdminPage() {
     return ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XGG'];
   };
 
+  const handleDeleteIndividual = (id: string) => {
+    setDeleteIdConfirm(id);
+  };
+
   const confirmDeleteIndividual = async () => {
     if (!deleteIdConfirm) return;
     setIsDeleting(true);
