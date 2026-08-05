@@ -863,19 +863,6 @@ export default function AdminPage() {
                       <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.isActive ? 'translate-x-5' : 'translate-x-0'}`} />
                     </button>
                   </div>
-                  
-                  <div className="flex items-center justify-between border-t border-neutral-100 pt-4">
-                    <div>
-                      <span className="font-medium block text-sm">Permitir novos administradores</span>
-                      <span className="text-xs text-neutral-500">Permite que outras pessoas criem contas de administrador.</span>
-                    </div>
-                    <button 
-                      onClick={() => setConfig({ ...config, allowAdminRegistration: config.allowAdminRegistration === false ? true : false })}
-                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.allowAdminRegistration !== false ? 'bg-green-500' : 'bg-neutral-300'}`}
-                    >
-                      <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.allowAdminRegistration !== false ? 'translate-x-5' : 'translate-x-0'}`} />
-                    </button>
-                  </div>
 
                   <div className="flex flex-col gap-3 border-t border-neutral-100 pt-4">
                     <div className="flex items-center justify-between">
@@ -1667,12 +1654,31 @@ export default function AdminPage() {
 
       {activeTab === 'users' && (
         <div className="flex flex-col gap-6">
-          <div className="bg-white p-6 rounded-lg shadow-sm border border-neutral-200">
-            <div className="flex items-center justify-between mb-4">
+          <div className="bg-white p-6 rounded-lg shadow-sm border border-neutral-200 flex flex-col gap-6">
+            <div className="flex items-center justify-between pb-4 border-b border-neutral-100">
               <div>
                 <h3 className="text-lg font-bold flex items-center gap-2"><Shield size={20} /> Usuários Administradores ({adminUsers.length})</h3>
                 <p className="text-xs text-neutral-500 mt-1">Gerencie os acessos, aprovações e políticas de permissão da área administrativa.</p>
               </div>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
+              <div>
+                <span className="font-medium block text-sm text-neutral-900">Permitir cadastro de novos Administradores</span>
+                <span className="text-xs text-neutral-500">Permite que novas pessoas criem conta na tela de login do Admin. Os novos cadastros dependerão da aprovação do Admin Master.</span>
+              </div>
+              <button 
+                onClick={async () => {
+                  if (!config) return;
+                  const updated = { ...config, allowAdminRegistration: config.allowAdminRegistration === false ? true : false };
+                  setConfig(updated);
+                  await updateConfig(updated);
+                  toast.success('Configuração de cadastro de administradores atualizada!');
+                }}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.allowAdminRegistration !== false ? 'bg-green-500' : 'bg-neutral-300'}`}
+              >
+                <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.allowAdminRegistration !== false ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
             </div>
 
             <div className="overflow-x-auto">
