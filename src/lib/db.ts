@@ -1,9 +1,17 @@
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, addDoc, deleteDoc } from 'firebase/firestore';
 import { db } from './firebase';
-import { AppConfig, Registration } from '../types';
+import { AppConfig, Registration, AdminUser, AdminUserPermissions } from '../types';
 
 export const CONFIG_DOC = 'config/main';
 export const REGISTRATIONS_COL = 'registrations';
+export const ADMIN_USERS_COL = 'admin_users';
+
+export const DEFAULT_PERMISSIONS: AdminUserPermissions = {
+  canManageConfig: true,
+  canManageUsers: true,
+  canDeleteRegistrations: true,
+  canExportData: true
+};
 
 export async function clearAllRegistrations(): Promise<{ success: boolean; message: string }> {
   try {
@@ -146,15 +154,14 @@ export async function submitRegistration(data: Omit<Registration, 'isAdmin' | 'c
       const ref = doc(db, REGISTRATIONS_COL, existingReg.id as string);
       await setDoc(ref, {
         ...data,
-        isAdmin: existingReg.isAdmin,
+        isAdmin: false,
         createdAt: existingReg.createdAt
       }, { merge: true });
       return { success: true, message: "Cadastro atualizado com sucesso!" };
     } else {
-      const isAdmin = allRegs.length === 0;
       await addDoc(collection(db, REGISTRATIONS_COL), {
         ...data,
-        isAdmin,
+        isAdmin: false,
         createdAt: Date.now()
       });
       return { success: true, message: "Cadastro realizado com sucesso!" };
@@ -175,3 +182,90 @@ export async function deleteRegistration(id: string): Promise<{ success: boolean
     return { success: false, message: "Erro ao excluir cadastro." };
   }
 }
+
+export async function getAdminUser(uid: string): Promise<AdminUser | null> {
+  try {
+    const userRef = doc(db, ADMIN_USERS_COL, uid);
+    const snapshot = await getDoc(userRef);
+    if (snapshot.exists()) {
+      return { uid: snapshot.id, ...snapshot.data() } as AdminUser;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error getting admin user: ", error);
+    return null;
+  }
+}
+
+export async function ensureAdminUserRecord(uid: string, email: string): Promise<AdminUser> {
+  const userRef = doc(db, ADMIN_USERS_COL, uid);
+  const snapshot = await getDoc(userRef);
+
+  if (snapshot.exists()) {
+    return { uid: snapshot.id, ...snapshot.data() } as AdminUser;
+  }
+
+  const allAdminsSnapshot = await getDocs(collection(db, ADMIN_USERS_COL));
+  const isFirstAdmin = allAdminsSnapshot.empty;
+
+  const newAdminUser: Omit<AdminUser, 'uid'> = {
+    email,
+    role: isFirstAdmin ? 'master' : 'admin',
+    status: isFirstAdmin ? 'approved' : 'pending',
+    createdAt: Date.now(),
+    permissions: isFirstAdmin ? DEFAULT_PERMISSIONS : {
+      canManageConfig: false,
+      canManageUsers: false,
+      canDeleteRegistrations: false,
+      canExportData: true
+    }
+  };
+
+  await setDoc(userRef, newAdminUser);
+  return { uid, ...newAdminUser };
+}
+
+export function subscribeToAdminUsers(callback: (users: AdminUser[]) => void) {
+  return onSnapshot(collection(db, ADMIN_USERS_COL), (snapshot) => {
+    const users = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as AdminUser));
+    callback(users);
+  });
+}
+
+export async function updateAdminUserStatus(uid: string, status: 'approved' | 'rejected', approverEmail: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const userRef = doc(db, ADMIN_USERS_COL, uid);
+    await setDoc(userRef, {
+      status,
+      approvedBy: approverEmail,
+      approvedAt: Date.now()
+    }, { merge: true });
+    return { success: true, message: `Status do usuário atualizado para ${status === 'approved' ? 'Aprovado' : 'Recusado'}.` };
+  } catch (error: any) {
+    console.error("Error updating admin user status: ", error);
+    return { success: false, message: "Erro ao atualizar status do usuário." };
+  }
+}
+
+export async function updateAdminUserPermissions(uid: string, permissions: AdminUserPermissions): Promise<{ success: boolean; message: string }> {
+  try {
+    const userRef = doc(db, ADMIN_USERS_COL, uid);
+    await setDoc(userRef, { permissions }, { merge: true });
+    return { success: true, message: "Permissões do usuário atualizadas com sucesso." };
+  } catch (error: any) {
+    console.error("Error updating permissions: ", error);
+    return { success: false, message: "Erro ao atualizar permissões do usuário." };
+  }
+}
+
+export async function deleteAdminUserRecord(uid: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const userRef = doc(db, ADMIN_USERS_COL, uid);
+    await deleteDoc(userRef);
+    return { success: true, message: "Usuário administrador removido com sucesso." };
+  } catch (error: any) {
+    console.error("Error deleting admin user: ", error);
+    return { success: false, message: "Erro ao remover usuário administrador." };
+  }
+}
+

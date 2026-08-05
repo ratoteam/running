@@ -53,6 +53,25 @@ export interface Registration {
   genero?: string;
   modalidade?: string;
   pcd?: string;
-  isAdmin: boolean;
+  isAdmin?: boolean;
   createdAt: number;
 }
+
+export interface AdminUserPermissions {
+  canManageConfig: boolean;
+  canManageUsers: boolean;
+  canDeleteRegistrations: boolean;
+  canExportData: boolean;
+}
+
+export interface AdminUser {
+  uid: string;
+  email: string;
+  role: 'master' | 'admin';
+  status: 'approved' | 'pending' | 'rejected';
+  createdAt: number;
+  approvedBy?: string;
+  approvedAt?: number;
+  permissions: AdminUserPermissions;
+}
+

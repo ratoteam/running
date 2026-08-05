@@ -2,13 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Button, Input, Select } from '../components/ui';
-import { AppConfig, Registration, KitOption } from '../types';
-import { getConfig, subscribeToConfig, subscribeToRegistrations, updateConfig, clearAllRegistrations, importRegistrations, deleteRegistration, submitRegistration } from '../lib/db';
+import { AppConfig, Registration, KitOption, AdminUser, AdminUserPermissions } from '../types';
+import { getConfig, subscribeToConfig, subscribeToRegistrations, updateConfig, clearAllRegistrations, importRegistrations, deleteRegistration, submitRegistration, ensureAdminUserRecord, subscribeToAdminUsers, updateAdminUserStatus, updateAdminUserPermissions, deleteAdminUserRecord } from '../lib/db';
 import { auth, storage } from '../lib/firebase';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Logo } from '../components/Logo';
-import { Eye, EyeOff, Image as ImageIcon, Upload, Loader2, X, Link2, Check, BarChart3, Settings, Users, Trash2, Download, Database, FileUp, FileDown, Trash, Edit, Bold, Italic } from 'lucide-react';
+import { Eye, EyeOff, Image as ImageIcon, Upload, Loader2, X, Link2, Check, BarChart3, Settings, Users, Trash2, Download, Database, FileUp, FileDown, Trash, Edit, Bold, Italic, Shield, ShieldAlert, ShieldCheck, UserCheck, UserX, Lock, Unlock, KeyRound, User } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 import * as XLSX from 'xlsx';
@@ -80,7 +80,12 @@ export default function AdminPage() {
   const [showKitUrlInput, setShowKitUrlInput] = useState(false);
   const [showLogoUrlInput, setShowLogoUrlInput] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'config' | 'dashboard' | 'registrations'>('dashboard');
+  const [currentAdminUser, setCurrentAdminUser] = useState<AdminUser | null>(null);
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
+  const [activeTab, setActiveTab] = useState<'config' | 'dashboard' | 'registrations' | 'users'>('dashboard');
+  const [editingUserPermissions, setEditingUserPermissions] = useState<AdminUser | null>(null);
+  const [deleteAdminUserConfirm, setDeleteAdminUserConfirm] = useState<AdminUser | null>(null);
+  const [isUpdatingUser, setIsUpdatingUser] = useState(false);
   
   const [editGenders, setEditGenders] = useState<string[]>([]);
   const [newGenderName, setNewGenderName] = useState('');
@@ -139,11 +144,14 @@ export default function AdminPage() {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setIsAuthenticated(true);
+        const adminRec = await ensureAdminUserRecord(user.uid, user.email || '');
+        setCurrentAdminUser(adminRec);
       } else {
         setIsAuthenticated(false);
+        setCurrentAdminUser(null);
       }
       setAuthLoading(false);
     });
@@ -161,14 +169,19 @@ export default function AdminPage() {
     });
     
     let unsubRegs = () => {};
-    if (isAuthenticated) {
+    let unsubAdmins = () => {};
+    if (isAuthenticated && currentAdminUser?.status === 'approved') {
       unsubRegs = subscribeToRegistrations(setRegistrations);
+      unsubAdmins = subscribeToAdminUsers(setAdminUsers);
     }
     return () => {
       unsubConfig();
-      if (isAuthenticated) unsubRegs();
+      if (isAuthenticated) {
+        unsubRegs();
+        unsubAdmins();
+      }
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, currentAdminUser]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -203,8 +216,43 @@ export default function AdminPage() {
     }
   };
 
-  const handleDeleteIndividual = (id: string) => {
-    setDeleteIdConfirm(id);
+  const handleUserStatusChange = async (targetUser: AdminUser, newStatus: 'approved' | 'rejected') => {
+    if (!currentAdminUser) return;
+    setIsUpdatingUser(true);
+    const result = await updateAdminUserStatus(targetUser.uid, newStatus, currentAdminUser.email);
+    setIsUpdatingUser(false);
+    if (result.success) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
+  };
+
+  const handleSaveUserPermissions = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUserPermissions) return;
+    setIsUpdatingUser(true);
+    const result = await updateAdminUserPermissions(editingUserPermissions.uid, editingUserPermissions.permissions);
+    setIsUpdatingUser(false);
+    if (result.success) {
+      toast.success(result.message);
+      setEditingUserPermissions(null);
+    } else {
+      toast.error(result.message);
+    }
+  };
+
+  const confirmDeleteAdminUser = async () => {
+    if (!deleteAdminUserConfirm) return;
+    setIsUpdatingUser(true);
+    const result = await deleteAdminUserRecord(deleteAdminUserConfirm.uid);
+    setIsUpdatingUser(false);
+    setDeleteAdminUserConfirm(null);
+    if (result.success) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
   };
 
   const handleSaveEditRegistration = async (e: React.FormEvent) => {
@@ -634,6 +682,46 @@ export default function AdminPage() {
     );
   }
 
+  if (currentAdminUser?.status === 'pending') {
+    return (
+      <div className="flex flex-col items-center justify-center max-w-lg mx-auto w-full pt-16 gap-6 text-center">
+        <Logo />
+        <div className="bg-white p-8 rounded-xl shadow-sm border border-neutral-200 w-full flex flex-col items-center">
+          <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-4">
+            <ShieldAlert size={36} />
+          </div>
+          <h2 className="text-xl font-bold text-neutral-900 mb-2">Aguardando Aprovação</h2>
+          <p className="text-sm text-neutral-600 mb-6 leading-relaxed">
+            Sua conta (<strong>{currentAdminUser.email}</strong>) foi registrada. Para acessar a área administrativa, o <strong>Administrador Master</strong> precisa aprovar seu cadastro.
+          </p>
+          <Button onClick={handleLogout} className="bg-neutral-900 text-white w-full">
+            Sair / Voltar ao Início
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentAdminUser?.status === 'rejected') {
+    return (
+      <div className="flex flex-col items-center justify-center max-w-lg mx-auto w-full pt-16 gap-6 text-center">
+        <Logo />
+        <div className="bg-white p-8 rounded-xl shadow-sm border border-neutral-200 w-full flex flex-col items-center">
+          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-4">
+            <UserX size={36} />
+          </div>
+          <h2 className="text-xl font-bold text-neutral-900 mb-2">Acesso Recusado</h2>
+          <p className="text-sm text-neutral-600 mb-6 leading-relaxed">
+            O acesso da sua conta (<strong>{currentAdminUser.email}</strong>) foi recusado pelo Administrador Master.
+          </p>
+          <Button onClick={handleLogout} className="bg-neutral-900 text-white w-full">
+            Sair / Voltar ao Início
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!config) return <div className="flex-1 flex items-center justify-center">Carregando configurações...</div>;
 
   const filteredRegistrations = registrations.filter(r => {
@@ -745,6 +833,12 @@ export default function AdminPage() {
           className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md font-medium text-sm whitespace-nowrap transition-colors ${activeTab === 'config' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
         >
           <Settings size={18} /> Configurações Gerais
+        </button>
+        <button 
+          onClick={() => setActiveTab('users')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md font-medium text-sm whitespace-nowrap transition-colors ${activeTab === 'users' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
+        >
+          <Shield size={18} /> Usuários {adminUsers.filter(u => u.status === 'pending').length > 0 && <span className="bg-amber-500 text-white text-xs px-1.5 py-0.5 rounded-full font-bold">{adminUsers.filter(u => u.status === 'pending').length}</span>}
         </button>
       </div>
 
@@ -1570,6 +1664,156 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {activeTab === 'users' && (
+        <div className="flex flex-col gap-6">
+          <div className="bg-white p-6 rounded-lg shadow-sm border border-neutral-200">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-bold flex items-center gap-2"><Shield size={20} /> Usuários Administradores ({adminUsers.length})</h3>
+                <p className="text-xs text-neutral-500 mt-1">Gerencie os acessos, aprovações e políticas de permissão da área administrativa.</p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-neutral-100 text-neutral-600">
+                  <tr>
+                    <th className="p-3 rounded-tl">Usuário (E-mail)</th>
+                    <th className="p-3">Função</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3">Data de Cadastro</th>
+                    <th className="p-3 rounded-tr text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminUsers.map(user => {
+                    const isMaster = user.role === 'master';
+                    const isSelf = user.uid === currentAdminUser?.uid;
+                    const canManage = currentAdminUser?.role === 'master' || currentAdminUser?.permissions?.canManageUsers;
+
+                    return (
+                      <tr key={user.uid} className="border-b last:border-0 hover:bg-neutral-50">
+                        <td className="p-3 font-medium">
+                          <div className="flex items-center gap-2">
+                            <span>{user.email}</span>
+                            {isSelf && <span className="text-xs bg-neutral-200 text-neutral-800 px-2 py-0.5 rounded font-bold">(Você)</span>}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          {isMaster ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-bold bg-purple-100 text-purple-800 px-2.5 py-1 rounded-full">
+                              <ShieldCheck size={14} /> Master
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium bg-neutral-100 text-neutral-700 px-2.5 py-1 rounded-full">
+                              <User size={14} /> Admin
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          {user.status === 'approved' && (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold bg-green-100 text-green-800 px-2.5 py-1 rounded-full">
+                              <UserCheck size={14} /> Aprovado
+                            </span>
+                          )}
+                          {user.status === 'pending' && (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full animate-pulse">
+                              <ShieldAlert size={14} /> Aguardando Aprovação
+                            </span>
+                          )}
+                          {user.status === 'rejected' && (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold bg-red-100 text-red-800 px-2.5 py-1 rounded-full">
+                              <UserX size={14} /> Recusado
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 text-neutral-500">
+                          {user.createdAt ? new Date(user.createdAt).toLocaleDateString('pt-BR') : '-'}
+                        </td>
+                        <td className="p-3 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            {canManage && !isSelf && !isMaster && (
+                              <>
+                                {user.status === 'pending' && (
+                                  <>
+                                    <Button 
+                                      onClick={() => handleUserStatusChange(user, 'approved')} 
+                                      className="h-8 px-3 text-xs bg-green-600 hover:bg-green-700 text-white flex items-center gap-1"
+                                      disabled={isUpdatingUser}
+                                    >
+                                      <Check size={14} /> Aprovar
+                                    </Button>
+                                    <Button 
+                                      onClick={() => handleUserStatusChange(user, 'rejected')} 
+                                      className="h-8 px-3 text-xs bg-red-100 text-red-700 hover:bg-red-200 border border-red-300 flex items-center gap-1"
+                                      disabled={isUpdatingUser}
+                                    >
+                                      <X size={14} /> Recusar
+                                    </Button>
+                                  </>
+                                )}
+
+                                {user.status === 'approved' && (
+                                  <Button 
+                                    onClick={() => handleUserStatusChange(user, 'rejected')} 
+                                    className="h-8 px-2.5 text-xs bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 flex items-center gap-1"
+                                    title="Bloquear Acesso"
+                                    disabled={isUpdatingUser}
+                                  >
+                                    <Lock size={14} /> Bloquear
+                                  </Button>
+                                )}
+
+                                {user.status === 'rejected' && (
+                                  <Button 
+                                    onClick={() => handleUserStatusChange(user, 'approved')} 
+                                    className="h-8 px-2.5 text-xs bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 flex items-center gap-1"
+                                    title="Re-aprovar Acesso"
+                                    disabled={isUpdatingUser}
+                                  >
+                                    <Unlock size={14} /> Re-aprovar
+                                  </Button>
+                                )}
+
+                                <button 
+                                  onClick={() => setEditingUserPermissions(user)}
+                                  className="text-neutral-500 hover:text-neutral-900 transition-colors p-1.5 rounded hover:bg-neutral-200"
+                                  title="Editar Permissões"
+                                >
+                                  <KeyRound size={16} />
+                                </button>
+
+                                <button 
+                                  onClick={() => setDeleteAdminUserConfirm(user)}
+                                  className="text-red-400 hover:text-red-600 transition-colors p-1.5 rounded hover:bg-red-50"
+                                  title="Remover Usuário"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </>
+                            )}
+
+                            {isMaster && isSelf && (
+                              <span className="text-xs text-neutral-400 italic">Administrador Master</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {adminUsers.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-4 text-center text-neutral-500">Nenhum usuário administrador cadastrado.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
       {previewImage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="bg-white rounded-lg overflow-hidden max-w-3xl w-full flex flex-col">
@@ -1896,6 +2140,147 @@ export default function AdminPage() {
                 </Button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Permissions Modal */}
+      {editingUserPermissions && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center p-4 border-b border-neutral-200 bg-neutral-50">
+              <h3 className="font-bold text-lg text-neutral-900 flex items-center gap-2">
+                <KeyRound size={20} className="text-neutral-700" />
+                Permissões de {editingUserPermissions.email}
+              </h3>
+              <button 
+                onClick={() => setEditingUserPermissions(null)} 
+                className="text-neutral-500 hover:text-black bg-neutral-100 hover:bg-neutral-200 p-1.5 rounded-full transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveUserPermissions} className="p-6 flex flex-col gap-4">
+              <p className="text-xs text-neutral-500 mb-2">
+                Defina quais seções e ações este usuário terá permissão para acessar no painel.
+              </p>
+
+              <div className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200">
+                <div>
+                  <span className="font-medium text-sm block text-neutral-900">Gerenciar Configurações</span>
+                  <span className="text-xs text-neutral-500">Editar kits, tamanhos, banners e regras do evento.</span>
+                </div>
+                <input 
+                  type="checkbox"
+                  checked={editingUserPermissions.permissions?.canManageConfig ?? false}
+                  onChange={e => setEditingUserPermissions({
+                    ...editingUserPermissions,
+                    permissions: { ...editingUserPermissions.permissions, canManageConfig: e.target.checked }
+                  })}
+                  className="h-5 w-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200">
+                <div>
+                  <span className="font-medium text-sm block text-neutral-900">Gerenciar Usuários</span>
+                  <span className="text-xs text-neutral-500">Aprovar, recusar e editar permissões de outros admins.</span>
+                </div>
+                <input 
+                  type="checkbox"
+                  checked={editingUserPermissions.permissions?.canManageUsers ?? false}
+                  onChange={e => setEditingUserPermissions({
+                    ...editingUserPermissions,
+                    permissions: { ...editingUserPermissions.permissions, canManageUsers: e.target.checked }
+                  })}
+                  className="h-5 w-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200">
+                <div>
+                  <span className="font-medium text-sm block text-neutral-900">Excluir Registros</span>
+                  <span className="text-xs text-neutral-500">Excluir inscritos individualmente e limpar banco.</span>
+                </div>
+                <input 
+                  type="checkbox"
+                  checked={editingUserPermissions.permissions?.canDeleteRegistrations ?? false}
+                  onChange={e => setEditingUserPermissions({
+                    ...editingUserPermissions,
+                    permissions: { ...editingUserPermissions.permissions, canDeleteRegistrations: e.target.checked }
+                  })}
+                  className="h-5 w-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200">
+                <div>
+                  <span className="font-medium text-sm block text-neutral-900">Exportar Dados e Backups</span>
+                  <span className="text-xs text-neutral-500">Baixar relatórios Excel e backups CSV.</span>
+                </div>
+                <input 
+                  type="checkbox"
+                  checked={editingUserPermissions.permissions?.canExportData ?? false}
+                  onChange={e => setEditingUserPermissions({
+                    ...editingUserPermissions,
+                    permissions: { ...editingUserPermissions.permissions, canExportData: e.target.checked }
+                  })}
+                  className="h-5 w-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
+                />
+              </div>
+
+              <div className="flex justify-end items-center gap-3 border-t border-neutral-200 pt-4 mt-2">
+                <Button 
+                  type="button" 
+                  onClick={() => setEditingUserPermissions(null)} 
+                  className="bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-100"
+                  disabled={isUpdatingUser}
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit" 
+                  className="bg-neutral-900 text-white hover:bg-neutral-800"
+                  disabled={isUpdatingUser}
+                >
+                  {isUpdatingUser ? 'Salvando...' : 'Salvar Permissões'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Admin User Modal */}
+      {deleteAdminUserConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="flex flex-col items-center justify-center p-6 text-center">
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-4">
+                <Trash2 size={32} />
+              </div>
+              <h3 className="text-xl font-bold text-neutral-900 mb-2">Remover Usuário</h3>
+              <p className="text-sm text-neutral-600 mb-6">
+                Tem certeza que deseja remover o usuário <strong>{deleteAdminUserConfirm.email}</strong> da lista de administradores?
+              </p>
+              <div className="flex gap-3 w-full">
+                <Button 
+                  onClick={() => setDeleteAdminUserConfirm(null)} 
+                  className="flex-1 bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-50"
+                  disabled={isUpdatingUser}
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  onClick={confirmDeleteAdminUser} 
+                  className="flex-1 bg-red-600 text-white hover:bg-red-700 border border-red-700"
+                  disabled={isUpdatingUser}
+                >
+                  {isUpdatingUser ? 'Removendo...' : 'Remover'}
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       )}

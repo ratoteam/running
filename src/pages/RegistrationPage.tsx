@@ -4,10 +4,10 @@ import { toast } from 'react-toastify';
 import { Logo } from '../components/Logo';
 import { Button, Input, Select } from '../components/ui';
 import { AppConfig, Registration } from '../types';
-import { getConfig, subscribeToConfig, subscribeToRegistrations, submitRegistration, initConfig, getRegistrationByCpf } from '../lib/db';
+import { getConfig, subscribeToConfig, subscribeToRegistrations, submitRegistration, initConfig, getRegistrationByCpf, ensureAdminUserRecord } from '../lib/db';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { auth } from '../lib/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { Eye, EyeOff, X } from 'lucide-react';
 
 type FormValues = Omit<Registration, 'isAdmin' | 'createdAt' | 'id'> & { id?: string };
@@ -77,11 +77,27 @@ export default function RegistrationPage() {
     }
     setIsAdminLoginLoading(true);
     try {
+      let userCred;
       if (isAdminSignUp) {
-        await createUserWithEmailAndPassword(auth, adminEmail, adminPassword);
+        userCred = await createUserWithEmailAndPassword(auth, adminEmail, adminPassword);
       } else {
-        await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
+        userCred = await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
       }
+      
+      const adminRecord = await ensureAdminUserRecord(userCred.user.uid, userCred.user.email || adminEmail);
+      
+      if (adminRecord.status === 'pending') {
+        await signOut(auth);
+        setAdminLoginError('Sua conta foi criada/acessada, porém está aguardando aprovação do Administrador Master.');
+        return;
+      }
+
+      if (adminRecord.status === 'rejected') {
+        await signOut(auth);
+        setAdminLoginError('Seu acesso de administrador foi recusado.');
+        return;
+      }
+
       setShowAdminLoginModal(false);
       navigate('/admin');
     } catch (e: any) {
