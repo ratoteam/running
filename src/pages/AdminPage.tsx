@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { Button, Input } from '../components/ui';
+import { Button, Input, Select } from '../components/ui';
 import { AppConfig, Registration, KitOption } from '../types';
-import { getConfig, subscribeToConfig, subscribeToRegistrations, updateConfig, clearAllRegistrations, importRegistrations, deleteRegistration } from '../lib/db';
+import { getConfig, subscribeToConfig, subscribeToRegistrations, updateConfig, clearAllRegistrations, importRegistrations, deleteRegistration, submitRegistration } from '../lib/db';
 import { auth, storage } from '../lib/firebase';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -12,6 +12,38 @@ import { Eye, EyeOff, Image as ImageIcon, Upload, Loader2, X, Link2, Check, BarC
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 import * as XLSX from 'xlsx';
+
+const maskCPF = (value: string) => {
+  return value
+    .replace(/\D/g, '')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})/, '$1-$2')
+    .replace(/(-\d{2})\d+?$/, '$1');
+};
+
+const maskPhone = (value: string) => {
+  return value
+    .replace(/\D/g, '')
+    .replace(/(\d{2})(\d)/, '($1) $2')
+    .replace(/(\d{4,5})(\d{4})/, '$1-$2')
+    .replace(/(-\d{4})\d+?$/, '$1');
+};
+
+const maskCEP = (value: string) => {
+  return value
+    .replace(/\D/g, '')
+    .replace(/(\d{5})(\d)/, '$1-$2')
+    .replace(/(-\d{3})\d+?$/, '$1');
+};
+
+const maskDate = (value: string) => {
+  return value
+    .replace(/\D/g, '')
+    .replace(/(\d{2})(\d)/, '$1/$2')
+    .replace(/(\d{2})(\d)/, '$1/$2')
+    .replace(/(\/\d{4})\d+?$/, '$1');
+};
 
 export default function AdminPage() {
   const navigate = useNavigate();
@@ -64,6 +96,8 @@ export default function AdminPage() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [deleteIdConfirm, setDeleteIdConfirm] = useState<string | null>(null);
+  const [editingRegistration, setEditingRegistration] = useState<Registration | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -171,6 +205,38 @@ export default function AdminPage() {
 
   const handleDeleteIndividual = (id: string) => {
     setDeleteIdConfirm(id);
+  };
+
+  const handleSaveEditRegistration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRegistration) return;
+    setIsSavingEdit(true);
+    try {
+      const result = await submitRegistration(editingRegistration);
+      if (result.success) {
+        toast.success('Cadastro atualizado com sucesso!');
+        setEditingRegistration(null);
+      } else {
+        toast.error(result.message);
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Erro ao atualizar o cadastro.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const getAvailableEditSizes = () => {
+    if (!editingRegistration) return [];
+    const selectedKitObj = config?.kits?.find(k => k.name === editingRegistration.kit);
+    if (selectedKitObj && selectedKitObj.tshirtSizes && Object.keys(selectedKitObj.tshirtSizes).length > 0) {
+      return Object.keys(selectedKitObj.tshirtSizes);
+    }
+    if (config?.tshirtSizes) {
+      return Object.keys(config.tshirtSizes);
+    }
+    return ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XGG'];
   };
 
   const confirmDeleteIndividual = async () => {
@@ -1452,10 +1518,7 @@ export default function AdminPage() {
                       <td className="p-3 font-bold">{r.tshirtSize || '-'}</td>
                       <td className="p-3 text-center flex items-center justify-center gap-2">
                         <button 
-                          onClick={() => {
-                            const baseUrl = `${window.location.origin}${window.location.pathname.replace(/\/admin\/?$/, '/')}`;
-                            window.open(`${baseUrl}?cpf=${encodeURIComponent(r.cpf)}&admin=true`, '_blank');
-                          }}
+                          onClick={() => setEditingRegistration({ ...r })}
                           className="text-neutral-500 hover:text-neutral-900 transition-colors p-1 rounded hover:bg-neutral-200"
                           title="Editar Cadastro"
                         >
@@ -1586,6 +1649,253 @@ export default function AdminPage() {
                 </Button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Registration Modal */}
+      {editingRegistration && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full my-8 overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center p-4 border-b border-neutral-200 bg-neutral-50">
+              <h3 className="font-bold text-lg text-neutral-900 flex items-center gap-2">
+                <Edit size={20} className="text-neutral-700" />
+                Editar Cadastro de {editingRegistration.nome}
+              </h3>
+              <button 
+                onClick={() => setEditingRegistration(null)} 
+                className="text-neutral-500 hover:text-black bg-neutral-100 hover:bg-neutral-200 p-1.5 rounded-full transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <form onSubmit={handleSaveEditRegistration} className="p-6 flex flex-col gap-5 max-h-[80vh] overflow-y-auto">
+              {/* Dados Pessoais */}
+              <div>
+                <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3">Dados Pessoais</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Nome *</label>
+                    <Input 
+                      type="text" 
+                      required 
+                      value={editingRegistration.nome} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, nome: e.target.value })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Sobrenome *</label>
+                    <Input 
+                      type="text" 
+                      required 
+                      value={editingRegistration.sobrenome} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, sobrenome: e.target.value })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">CPF *</label>
+                    <Input 
+                      type="text" 
+                      required 
+                      value={editingRegistration.cpf} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, cpf: maskCPF(e.target.value) })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Data de Nascimento</label>
+                    <Input 
+                      type="text" 
+                      placeholder="DD/MM/AAAA" 
+                      value={editingRegistration.dataNascimento || ''} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, dataNascimento: maskDate(e.target.value) })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Gênero</label>
+                    <Select 
+                      value={editingRegistration.genero || ''} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, genero: e.target.value })}
+                    >
+                      <option value="">Selecione</option>
+                      {(config.genders || ['Masculino', 'Feminino']).map(g => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">PCD</label>
+                    <Select 
+                      value={editingRegistration.pcd || 'Não'} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, pcd: e.target.value })}
+                    >
+                      <option value="Não">Não</option>
+                      <option value="Sim">Sim</option>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Contato */}
+              <div className="border-t border-neutral-100 pt-4">
+                <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3">Contato</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">E-mail *</label>
+                    <Input 
+                      type="email" 
+                      required 
+                      value={editingRegistration.email} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, email: e.target.value })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">WhatsApp / Telefone *</label>
+                    <Input 
+                      type="text" 
+                      required 
+                      value={editingRegistration.whatsapp} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, whatsapp: maskPhone(e.target.value) })} 
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Opções de Inscrição */}
+              <div className="border-t border-neutral-100 pt-4">
+                <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3">Opções da Inscrição</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Kit</label>
+                    <Select 
+                      value={editingRegistration.kit} 
+                      onChange={e => {
+                        const newKit = e.target.value;
+                        setEditingRegistration({ ...editingRegistration, kit: newKit });
+                      }}
+                    >
+                      <option value="">Selecione</option>
+                      {(config.kits || []).map(k => (
+                        <option key={k.name} value={k.name}>{k.name}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Tamanho da Camiseta</label>
+                    <Select 
+                      value={editingRegistration.tshirtSize || ''} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, tshirtSize: e.target.value })}
+                    >
+                      <option value="">Selecione</option>
+                      {getAvailableEditSizes().map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Modalidade</label>
+                    <Select 
+                      value={editingRegistration.modalidade || ''} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, modalidade: e.target.value })}
+                    >
+                      <option value="">Selecione</option>
+                      {(config.modalities || []).map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Endereço */}
+              <div className="border-t border-neutral-100 pt-4">
+                <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3">Endereço</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">CEP</label>
+                    <Input 
+                      type="text" 
+                      value={editingRegistration.cep} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, cep: maskCEP(e.target.value) })} 
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Logradouro / Rua</label>
+                    <Input 
+                      type="text" 
+                      value={editingRegistration.endereco} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, endereco: e.target.value })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Número</label>
+                    <Input 
+                      type="text" 
+                      value={editingRegistration.numero} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, numero: e.target.value })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Complemento</label>
+                    <Input 
+                      type="text" 
+                      value={editingRegistration.complemento || ''} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, complemento: e.target.value })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Bairro</label>
+                    <Input 
+                      type="text" 
+                      value={editingRegistration.bairro} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, bairro: e.target.value })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Cidade</label>
+                    <Input 
+                      type="text" 
+                      value={editingRegistration.cidade} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, cidade: e.target.value })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">Estado (UF)</label>
+                    <Input 
+                      type="text" 
+                      maxLength={2}
+                      value={editingRegistration.estado} 
+                      onChange={e => setEditingRegistration({ ...editingRegistration, estado: e.target.value.toUpperCase() })} 
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Botões de Ação */}
+              <div className="flex justify-end items-center gap-3 border-t border-neutral-200 pt-4 mt-2">
+                <Button 
+                  type="button" 
+                  onClick={() => setEditingRegistration(null)} 
+                  className="bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-100"
+                  disabled={isSavingEdit}
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit" 
+                  className="bg-neutral-900 text-white hover:bg-neutral-800"
+                  disabled={isSavingEdit}
+                >
+                  {isSavingEdit ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="animate-spin" size={16} /> Salvando...
+                    </span>
+                  ) : (
+                    'Salvar Alterações'
+                  )}
+                </Button>
+              </div>
+            </form>
           </div>
         </div>
       )}
