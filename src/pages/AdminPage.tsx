@@ -1,56 +1,175 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { Button, Input, Select } from '../components/ui';
-import { AppConfig, Registration, KitOption, AdminUser, AdminUserPermissions } from '../types';
-import { getConfig, subscribeToConfig, subscribeToRegistrations, updateConfig, clearAllRegistrations, importRegistrations, deleteRegistration, submitRegistration, ensureAdminUserRecord, subscribeToAdminUsers, updateAdminUserStatus, updateAdminUserPermissions, deleteAdminUserRecord } from '../lib/db';
+import { Button, Input } from '../components/ui';
+import { AppConfig, Registration, KitOption, ResultItem } from '../types';
+import { getConfig, subscribeToConfig, subscribeToRegistrations, updateConfig, clearAllRegistrations, importRegistrations, deleteRegistration, subscribeToResults, importResults, clearAllResults } from '../lib/db';
 import { auth, storage } from '../lib/firebase';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Logo } from '../components/Logo';
-import { Eye, EyeOff, Image as ImageIcon, Upload, Loader2, X, Link2, Check, BarChart3, Settings, Users, Trash2, Download, Database, FileUp, FileDown, Trash, Edit, Bold, Italic, Shield, ShieldAlert, ShieldCheck, UserCheck, UserX, Lock, Unlock, KeyRound, User } from 'lucide-react';
+import { Eye, EyeOff, Image as ImageIcon, Upload, Loader2, X, Link2, Check, BarChart3, Settings, Users, Trash2, Download, Database, FileUp, FileDown, Trash, Edit, Bold, Italic, Trophy } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
+import { fixUtf8Mojibake, parseGender } from '../lib/utils';
+import { INITIAL_RESULTS_DATA } from '../data/initialResults';
 import * as XLSX from 'xlsx';
 
-const maskCPF = (value: string) => {
-  return value
-    .replace(/\D/g, '')
-    .replace(/(\d{3})(\d)/, '$1.$2')
-    .replace(/(\d{3})(\d)/, '$1.$2')
-    .replace(/(\d{3})(\d{1,2})/, '$1-$2')
-    .replace(/(-\d{2})\d+?$/, '$1');
-};
+interface ColumnCheckReport {
+  expectedName: string;
+  expectedKey: string;
+  matchedHeader: string | null;
+  found: boolean;
+  sampleValue: string;
+}
 
-const maskPhone = (value: string) => {
-  return value
-    .replace(/\D/g, '')
-    .replace(/(\d{2})(\d)/, '($1) $2')
-    .replace(/(\d{4,5})(\d{4})/, '$1-$2')
-    .replace(/(-\d{4})\d+?$/, '$1');
-};
+const DOB_ALIASES = [
+  'data nascimento', 'datanascimento', 'nascimento', 'data de nascimento',
+  'data de nasc', 'data de nasc.', 'data nasc', 'data nasc.', 'dt nasc', 'dt. nasc',
+  'dt. nasc.', 'dt_nasc', 'data_nascimento', 'data_nasc', 'dn', 'd.n.', 'd.n',
+  'dt.nasc', 'dat.nasc', 'd_nasc', 'd_n', 'birth', 'birthdate', 'dob', 'nasc',
+  'dt nascimento', 'dt. nascimento', 'idade', 'age'
+];
 
-const maskCEP = (value: string) => {
-  return value
-    .replace(/\D/g, '')
-    .replace(/(\d{5})(\d)/, '$1-$2')
-    .replace(/(-\d{3})\d+?$/, '$1');
-};
+const CGCP_ALIASES = [
+  'c.g.cp', 'cgcp', 'c.g.c.p.', 'c.g.cp.', 'c.g. cp', 'c g cp', 'cg.cp', 'cg cp',
+  'c.g./c.p.', 'c.g./c.p', 'c.g. / c.p.', 'c.g. / c.p', 'cg/cp', 'cg / cp',
+  'c.g.-c.p.', 'c.g. - c.p.', 'c.g. (cp)', 'c.g. (c.p.)', 'c.g. (c.p)',
+  'c.g.', 'cg', 'c.g.c.p', 'c_g_cp', 'cg_cp', 'col. g. cp', 'col. g. cp.', 'col.g.cp',
+  'c.g/c.p', 'c.g/c.p.', 'cg.c.p', 'c.g..cp',
+  'posicao', 'posição', 'colocacao', 'colocação', 'posicao geral', 'posição geral',
+  'pos. geral', 'pos geral', 'col. geral', 'colocacao geral', 'colocação geral',
+  'classificacao', 'classificação', 'clas. geral', 'cl. geral', 'pos', 'rank', 'ranking', 'geral',
+  'colocacao g.cp', 'colocação g.cp', 'posicao g.cp', 'posição g.cp'
+];
 
-const maskDate = (value: string) => {
-  return value
-    .replace(/\D/g, '')
-    .replace(/(\d{2})(\d)/, '$1/$2')
-    .replace(/(\d{2})(\d)/, '$1/$2')
-    .replace(/(\/\d{4})\d+?$/, '$1');
-};
+const RESULTS_EXPECTED_COLUMNS = [
+  { key: 'numero', label: 'número', aliases: ['número', 'numero', 'nÚmero', 'nº', 'numero peito', 'nãºmero', 'nâºmero', 'nÃºmero'] },
+  { key: 'participante', label: 'Participante', aliases: ['participante', 'nome', 'atleta'] },
+  { key: 'documento', label: 'Documento', aliases: ['documento', 'cpf', 'doc'] },
+  { key: 'dataNascimento', label: 'Data nascimento', aliases: DOB_ALIASES },
+  { key: 'genero', label: 'Gênero', aliases: ['gênero', 'genero', 'sexo', 'gãªnero', 'gÃªnero'] },
+  { key: 'email', label: 'E-mail', aliases: ['e-mail', 'email', 'e_mail'] },
+  { key: 'telefone', label: 'Telefone', aliases: ['telefone', 'whatsapp', 'celular', 'fone'] },
+  { key: 'modalidade', label: 'Modalidade', aliases: ['modalidade', 'distancia', 'corrida'] },
+  { key: 'camiseta', label: 'CAMISETA', aliases: ['camiseta', 'tshirt', 't-shirt', 'tshirtsize'] },
+  { key: 'tLiq', label: 'T. Liq.', aliases: ['t. liq.', 't.liq.', 'tempo liquido', 't liq', 'tliq'] },
+  { key: 'tBruto', label: 'T. Bruto', aliases: ['t. bruto', 't.bruto', 'tempo bruto', 't bruto', 'tbruto'] },
+  { key: 'pace', label: 'Pace', aliases: ['pace', 'ritmo'] },
+  { key: 'cgcp', label: 'C.G.CP', aliases: CGCP_ALIASES },
+];
+
+function getValueByAliases(row: Record<string, any>, aliases: string[], isDate: boolean = false): string {
+  // 1. Exact match on normalized header
+  for (const alias of aliases) {
+    const normAlias = normalizeHeaderString(alias);
+    if (!normAlias) continue;
+    for (const key of Object.keys(row)) {
+      if (normalizeHeaderString(key) === normAlias) {
+        const val = row[key];
+        if (val !== undefined && val !== null && String(val).trim() !== '') {
+          return String(val).trim();
+        }
+      }
+    }
+  }
+
+  // 2. Partial match on normalized header
+  for (const alias of aliases) {
+    const normAlias = normalizeHeaderString(alias);
+    if (normAlias.length >= 3) {
+      for (const key of Object.keys(row)) {
+        const normKey = normalizeHeaderString(key);
+        if (normKey.length >= 3 && (normKey.includes(normAlias) || normAlias.includes(normKey))) {
+          const val = row[key];
+          if (val !== undefined && val !== null && String(val).trim() !== '') {
+            return String(val).trim();
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Fallback for dates: scan values in row matching DD/MM/YYYY or YYYY-MM-DD
+  if (isDate) {
+    for (const key of Object.keys(row)) {
+      const val = String(row[key] || '').trim();
+      if (val.match(/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/) || val.match(/^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$/)) {
+        return val;
+      }
+    }
+  }
+
+  return '';
+}
+
+const REGISTRATIONS_EXPECTED_COLUMNS = [
+  { key: 'cpf', label: 'cpf', aliases: ['cpf', 'documento'] },
+  { key: 'nome', label: 'nome', aliases: ['nome', 'participante', 'first_name'] },
+  { key: 'sobrenome', label: 'sobrenome', aliases: ['sobrenome', 'last_name'] },
+  { key: 'dataNascimento', label: 'dataNascimento', aliases: ['datanascimento', 'data nascimento', 'nascimento'] },
+  { key: 'whatsapp', label: 'whatsapp', aliases: ['whatsapp', 'telefone', 'celular'] },
+  { key: 'email', label: 'email', aliases: ['email', 'e-mail'] },
+  { key: 'cep', label: 'cep', aliases: ['cep'] },
+  { key: 'numero', label: 'numero', aliases: ['numero', 'número', 'nãºmero', 'nÃºmero'] },
+  { key: 'complemento', label: 'complemento', aliases: ['complemento'] },
+  { key: 'cidade', label: 'cidade', aliases: ['cidade'] },
+  { key: 'estado', label: 'estado', aliases: ['estado', 'uf'] },
+  { key: 'tshirtSize', label: 'tshirtSize', aliases: ['tshirtsize', 'camiseta', 't-shirt'] },
+  { key: 'genero', label: 'genero', aliases: ['genero', 'gênero', 'gãªnero', 'gÃªnero', 'sexo'] },
+  { key: 'modalidade', label: 'modalidade', aliases: ['modalidade'] },
+  { key: 'kit', label: 'kit', aliases: ['kit'] },
+];
+
+function normalizeHeaderString(str: string): string {
+  const fixed = fixUtf8Mojibake(str);
+  return fixed
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function findMatchedHeader(aliases: string[], fileHeaders: string[]): string | null {
+  // 1. Exact match pass
+  for (const alias of aliases) {
+    const normAlias = normalizeHeaderString(alias);
+    if (!normAlias) continue;
+    for (const h of fileHeaders) {
+      const normH = normalizeHeaderString(h);
+      if (normH === normAlias) {
+        return h;
+      }
+    }
+  }
+
+  // 2. Partial match pass
+  for (const alias of aliases) {
+    const normAlias = normalizeHeaderString(alias);
+    if (normAlias.length < 3) continue;
+    for (const h of fileHeaders) {
+      const normH = normalizeHeaderString(h);
+      if (normH.length >= 3 && (normH.includes(normAlias) || normAlias.includes(normH))) {
+        return h;
+      }
+    }
+  }
+  return null;
+}
 
 export default function AdminPage() {
   const navigate = useNavigate();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(() => {
+    return localStorage.getItem('remember_admin_credentials') !== 'false';
+  });
+  const [loginEmail, setLoginEmail] = useState(() => {
+    return localStorage.getItem('saved_admin_email') || '';
+  });
+  const [loginPassword, setLoginPassword] = useState(() => {
+    return localStorage.getItem('saved_admin_password') || '';
+  });
   const [loginConfirmPassword, setLoginConfirmPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -80,12 +199,26 @@ export default function AdminPage() {
   const [showKitUrlInput, setShowKitUrlInput] = useState(false);
   const [showLogoUrlInput, setShowLogoUrlInput] = useState(false);
 
-  const [currentAdminUser, setCurrentAdminUser] = useState<AdminUser | null>(null);
-  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
-  const [activeTab, setActiveTab] = useState<'config' | 'dashboard' | 'registrations' | 'users'>('dashboard');
-  const [editingUserPermissions, setEditingUserPermissions] = useState<AdminUser | null>(null);
-  const [deleteAdminUserConfirm, setDeleteAdminUserConfirm] = useState<AdminUser | null>(null);
-  const [isUpdatingUser, setIsUpdatingUser] = useState(false);
+  const [activeTab, setActiveTab] = useState<'config' | 'dashboard' | 'registrations' | 'results'>('dashboard');
+  const [resultsList, setResultsList] = useState<ResultItem[]>([]);
+  const [showClearResultsConfirm, setShowClearResultsConfirm] = useState(false);
+  const [isClearingResults, setIsClearingResults] = useState(false);
+
+  // CSV Verification states for Results
+  const [showResultsVerifyModal, setShowResultsVerifyModal] = useState(false);
+  const [resultsFileName, setResultsFileName] = useState('');
+  const [resultsTotalRows, setResultsTotalRows] = useState(0);
+  const [resultsColumnReport, setResultsColumnReport] = useState<ColumnCheckReport[]>([]);
+  const [pendingResultsData, setPendingResultsData] = useState<Omit<ResultItem, 'id'>[]>([]);
+  const [isImportingResults, setIsImportingResults] = useState(false);
+
+  // CSV Verification states for Registrations
+  const [showRegVerifyModal, setShowRegVerifyModal] = useState(false);
+  const [regFileName, setRegFileName] = useState('');
+  const [regTotalRows, setRegTotalRows] = useState(0);
+  const [regColumnReport, setRegColumnReport] = useState<ColumnCheckReport[]>([]);
+  const [pendingRegData, setPendingRegData] = useState<Omit<Registration, 'id' | 'createdAt'>[]>([]);
+  const [isImportingRegs, setIsImportingRegs] = useState(false);
   
   const [editGenders, setEditGenders] = useState<string[]>([]);
   const [newGenderName, setNewGenderName] = useState('');
@@ -101,8 +234,6 @@ export default function AdminPage() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [deleteIdConfirm, setDeleteIdConfirm] = useState<string | null>(null);
-  const [editingRegistration, setEditingRegistration] = useState<Registration | null>(null);
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -144,14 +275,11 @@ export default function AdminPage() {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setIsAuthenticated(true);
-        const adminRec = await ensureAdminUserRecord(user.uid, user.email || '');
-        setCurrentAdminUser(adminRec);
       } else {
         setIsAuthenticated(false);
-        setCurrentAdminUser(null);
       }
       setAuthLoading(false);
     });
@@ -169,19 +297,22 @@ export default function AdminPage() {
     });
     
     let unsubRegs = () => {};
-    let unsubAdmins = () => {};
-    if (isAuthenticated && currentAdminUser?.status === 'approved') {
+    let unsubRes = () => {};
+    if (isAuthenticated) {
       unsubRegs = subscribeToRegistrations(setRegistrations);
-      unsubAdmins = subscribeToAdminUsers(setAdminUsers);
+      subscribeToResults((resData) => {
+        setResultsList(resData);
+      }).then(unsub => { unsubRes = unsub; });
     }
     return () => {
       unsubConfig();
       if (isAuthenticated) {
         unsubRegs();
-        unsubAdmins();
+        if (typeof unsubRes === 'function') unsubRes();
       }
     };
-  }, [isAuthenticated, currentAdminUser]);
+
+  }, [isAuthenticated]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,6 +333,16 @@ export default function AdminPage() {
       } else {
         await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
       }
+
+      if (rememberMe) {
+        localStorage.setItem('saved_admin_email', loginEmail);
+        localStorage.setItem('saved_admin_password', loginPassword);
+        localStorage.setItem('remember_admin_credentials', 'true');
+      } else {
+        localStorage.removeItem('saved_admin_email');
+        localStorage.removeItem('saved_admin_password');
+        localStorage.setItem('remember_admin_credentials', 'false');
+      }
     } catch (error: any) {
       if (error.code === 'auth/email-already-in-use') {
         setLoginError('Este e-mail já possui cadastro. Faça login em vez de criar conta.');
@@ -214,77 +355,6 @@ export default function AdminPage() {
         console.error(error);
       }
     }
-  };
-
-  const handleUserStatusChange = async (targetUser: AdminUser, newStatus: 'approved' | 'rejected') => {
-    if (!currentAdminUser) return;
-    setIsUpdatingUser(true);
-    const result = await updateAdminUserStatus(targetUser.uid, newStatus, currentAdminUser.email);
-    setIsUpdatingUser(false);
-    if (result.success) {
-      toast.success(result.message);
-    } else {
-      toast.error(result.message);
-    }
-  };
-
-  const handleSaveUserPermissions = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingUserPermissions) return;
-    setIsUpdatingUser(true);
-    const result = await updateAdminUserPermissions(editingUserPermissions.uid, editingUserPermissions.permissions);
-    setIsUpdatingUser(false);
-    if (result.success) {
-      toast.success(result.message);
-      setEditingUserPermissions(null);
-    } else {
-      toast.error(result.message);
-    }
-  };
-
-  const confirmDeleteAdminUser = async () => {
-    if (!deleteAdminUserConfirm) return;
-    setIsUpdatingUser(true);
-    const result = await deleteAdminUserRecord(deleteAdminUserConfirm.uid);
-    setIsUpdatingUser(false);
-    setDeleteAdminUserConfirm(null);
-    if (result.success) {
-      toast.success(result.message);
-    } else {
-      toast.error(result.message);
-    }
-  };
-
-  const handleSaveEditRegistration = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingRegistration) return;
-    setIsSavingEdit(true);
-    try {
-      const result = await submitRegistration(editingRegistration);
-      if (result.success) {
-        toast.success('Cadastro atualizado com sucesso!');
-        setEditingRegistration(null);
-      } else {
-        toast.error(result.message);
-      }
-    } catch (err: any) {
-      console.error(err);
-      toast.error('Erro ao atualizar o cadastro.');
-    } finally {
-      setIsSavingEdit(false);
-    }
-  };
-
-  const getAvailableEditSizes = () => {
-    if (!editingRegistration) return [];
-    const selectedKitObj = config?.kits?.find(k => k.name === editingRegistration.kit);
-    if (selectedKitObj && selectedKitObj.tshirtSizes && Object.keys(selectedKitObj.tshirtSizes).length > 0) {
-      return Object.keys(selectedKitObj.tshirtSizes);
-    }
-    if (config?.tshirtSizes) {
-      return Object.keys(config.tshirtSizes);
-    }
-    return ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XGG'];
   };
 
   const handleDeleteIndividual = (id: string) => {
@@ -379,7 +449,7 @@ export default function AdminPage() {
       cidade: 'São Paulo',
       estado: 'SP',
       tshirtSize: 'M',
-      genero: 'Masculino',
+      genero: 'M',
       modalidade: '5Km',
       pcd: 'Não',
       kit: 'Kit Simples'
@@ -387,67 +457,309 @@ export default function AdminPage() {
     downloadCSV(templateData, "modelo_importacao.csv");
   };
 
-  const handleImportCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // --- VERIFY & IMPORT INSCRIÇÕES CSV ---
+  const handleVerifyRegistrationsCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const workbook = XLSX.read(bstr, { type: 'binary' });
+        const arrayBuffer = evt.target?.result;
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const data = XLSX.utils.sheet_to_json<any>(worksheet);
-        
-        if (data.length === 0) {
-          toast.error("O arquivo está vazio.");
+        const headerRows = XLSX.utils.sheet_to_json<string[]>(worksheet, { header: 1 });
+        const rawData = XLSX.utils.sheet_to_json<any>(worksheet, { defval: '' });
+
+        if (rawData.length === 0) {
+          toast.error("O arquivo de inscrições está vazio.");
           return;
         }
 
-        const formattedData = data.map(row => ({
-          cpf: String(row.cpf || ''),
-          nome: String(row.nome || ''),
-          sobrenome: String(row.sobrenome || ''),
-          dataNascimento: String(row.dataNascimento || ''),
-          whatsapp: String(row.whatsapp || ''),
-          email: String(row.email || ''),
-          cep: String(row.cep || ''),
-          endereco: String(row.endereco || ''),
-          numero: String(row.numero || ''),
-          complemento: String(row.complemento || ''),
-          bairro: String(row.bairro || ''),
-          cidade: String(row.cidade || ''),
-          estado: String(row.estado || ''),
-          tshirtSize: String(row.tshirtSize || ''),
-          genero: String(row.genero || ''),
-          modalidade: String(row.modalidade || ''),
-          pcd: String(row.pcd || ''),
-          kit: String(row.kit || ''),
-          isAdmin: false
-        })).filter(r => r.cpf && r.nome); // Require at least cpf and nome
+        const data = rawData.map(row => {
+          const cleanRow: Record<string, any> = {};
+          Object.keys(row).forEach(k => {
+            const cleanKey = fixUtf8Mojibake(String(k || '')).trim().replace(/^\uFEFF/, '');
+            cleanRow[cleanKey] = row[k];
+          });
+          return cleanRow;
+        });
+
+        const headerSet = new Set<string>();
+        if (headerRows.length > 0 && Array.isArray(headerRows[0])) {
+          headerRows[0].forEach(h => {
+            if (h !== undefined && h !== null) {
+              const cleaned = fixUtf8Mojibake(String(h)).trim().replace(/^\uFEFF/, '');
+              if (cleaned) headerSet.add(cleaned);
+            }
+          });
+        }
+        data.forEach(row => {
+          Object.keys(row).forEach(k => {
+            if (k) headerSet.add(k);
+          });
+        });
+
+        const rawHeaders = Array.from(headerSet);
+        const report: ColumnCheckReport[] = REGISTRATIONS_EXPECTED_COLUMNS.map(col => {
+          const matchedHeader = findMatchedHeader(col.aliases, rawHeaders);
+          const sampleRow = data.find(r => matchedHeader && r[matchedHeader] !== undefined && String(r[matchedHeader]).trim() !== '');
+          const sampleVal = sampleRow && matchedHeader
+            ? fixUtf8Mojibake(String(sampleRow[matchedHeader]).trim())
+            : (data[0] && matchedHeader ? fixUtf8Mojibake(String(data[0][matchedHeader] || '')) : '');
+
+          return {
+            expectedName: col.label,
+            expectedKey: col.key,
+            matchedHeader,
+            found: !!matchedHeader,
+            sampleValue: sampleVal
+          };
+        });
+
+        const formattedData = data.map(row => {
+          const rawGen = row.genero || row['Gênero'] || row['GÃªnero'] || row.Genero || row.sexo || row.Sexo || '';
+          return {
+            cpf: fixUtf8Mojibake(row.cpf || row.CPF || row.Documento || row.documento || ''),
+            nome: fixUtf8Mojibake(row.nome || row.Nome || row.Participante || row.participante || ''),
+            sobrenome: fixUtf8Mojibake(row.sobrenome || row.Sobrenome || ''),
+            dataNascimento: fixUtf8Mojibake(row.dataNascimento || row['Data Nascimento'] || row['Data nascimento'] || ''),
+            whatsapp: fixUtf8Mojibake(row.whatsapp || row.WhatsApp || row.Telefone || row.telefone || ''),
+            email: fixUtf8Mojibake(row.email || row.Email || row['E-mail'] || ''),
+            cep: fixUtf8Mojibake(row.cep || row.CEP || ''),
+            endereco: '',
+            numero: fixUtf8Mojibake(row.numero || row.Número || row.Numero || ''),
+            complemento: fixUtf8Mojibake(row.complemento || row.Complemento || ''),
+            bairro: '',
+            cidade: fixUtf8Mojibake(row.cidade || row.Cidade || ''),
+            estado: fixUtf8Mojibake(row.estado || row.Estado || ''),
+            tshirtSize: fixUtf8Mojibake(row.tshirtSize || row.CAMISETA || row.Camiseta || ''),
+            genero: parseGender(rawGen),
+            modalidade: fixUtf8Mojibake(row.modalidade || row.Modalidade || ''),
+            pcd: '',
+            kit: fixUtf8Mojibake(row.kit || row.Kit || ''),
+            isAdmin: false
+          };
+        }).filter(r => r.cpf || r.nome);
 
         if (formattedData.length === 0) {
-          toast.error("Nenhum registro válido encontrado. Verifique os cabeçalhos.");
+          toast.error("Nenhum registro válido de inscrição encontrado. Verifique os cabeçalhos.");
           return;
         }
 
-        const result = await importRegistrations(formattedData);
-        if (result.success) {
-          toast.success(result.message);
-        } else {
-          toast.error(result.message);
-        }
+        setRegFileName(file.name);
+        setRegTotalRows(data.length);
+        setRegColumnReport(report);
+        setPendingRegData(formattedData);
+        setShowRegVerifyModal(true);
       } catch (error) {
-        console.error("Error parsing CSV: ", error);
-        toast.error("Erro ao ler o arquivo CSV. Verifique o formato.");
+        console.error("Erro ao ler o arquivo CSV de inscrições:", error);
+        toast.error("Erro ao ler o arquivo CSV de inscrições.");
       }
-      
-      // Reset file input
+
       e.target.value = '';
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
+
+  const handleConfirmRegistrationsImport = async () => {
+    setIsImportingRegs(true);
+    const result = await importRegistrations(pendingRegData);
+    setIsImportingRegs(false);
+    setShowRegVerifyModal(false);
+
+    if (result.success) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
+  };
+
+  const handleDownloadResultsTemplate = () => {
+    const templateData = [{
+      'número': '5001',
+      'Participante': 'João da Silva',
+      'Documento': '000.000.000-00',
+      'Data nascimento': '01/01/1990',
+      'Gênero': 'M - Masculino',
+      'E-mail': 'joao@email.com',
+      'Telefone': '(11) 99999-9999',
+      'Modalidade': '5Km',
+      'CAMISETA': 'M',
+      'T. Liq.': '00:22:15',
+      'T. Bruto': '00:22:20',
+      'Pace': '00:04:27',
+      'C.G.CP': '1'
+    }];
+    downloadCSV(templateData, "modelo_resultados.csv");
+  };
+
+  // --- VERIFY & IMPORT RESULTADOS CSV ---
+  const handleVerifyResultsCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const arrayBuffer = evt.target?.result;
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const headerRows = XLSX.utils.sheet_to_json<string[]>(worksheet, { header: 1 });
+        const rawData = XLSX.utils.sheet_to_json<any>(worksheet, { defval: '' });
+
+        if (rawData.length === 0) {
+          toast.error("O arquivo de resultados está vazio.");
+          return;
+        }
+
+        const data = rawData.map(row => {
+          const cleanRow: Record<string, any> = {};
+          Object.keys(row).forEach(k => {
+            const cleanKey = fixUtf8Mojibake(String(k || '')).trim().replace(/^\uFEFF/, '');
+            cleanRow[cleanKey] = row[k];
+          });
+          return cleanRow;
+        });
+
+        // Collect all header names present in the file
+        const headerSet = new Set<string>();
+        if (headerRows.length > 0 && Array.isArray(headerRows[0])) {
+          headerRows[0].forEach(h => {
+            if (h !== undefined && h !== null) {
+              const cleaned = fixUtf8Mojibake(String(h)).trim().replace(/^\uFEFF/, '');
+              if (cleaned) headerSet.add(cleaned);
+            }
+          });
+        }
+        data.forEach(row => {
+          Object.keys(row).forEach(k => {
+            if (k) headerSet.add(k);
+          });
+        });
+
+        const rawHeaders = Array.from(headerSet);
+        const report: ColumnCheckReport[] = RESULTS_EXPECTED_COLUMNS.map(col => {
+          const matchedHeader = findMatchedHeader(col.aliases, rawHeaders);
+          // Search all rows for a non-empty sample value if row 0 has empty value
+          const sampleRow = data.find(r => matchedHeader && r[matchedHeader] !== undefined && String(r[matchedHeader]).trim() !== '');
+          const sampleVal = sampleRow && matchedHeader
+            ? fixUtf8Mojibake(String(sampleRow[matchedHeader]).trim())
+            : (data[0] && matchedHeader ? fixUtf8Mojibake(String(data[0][matchedHeader] || '')) : '');
+
+          return {
+            expectedName: col.label,
+            expectedKey: col.key,
+            matchedHeader,
+            found: !!matchedHeader,
+            sampleValue: sampleVal
+          };
+        });
+
+        const formattedResults: Omit<ResultItem, 'id'>[] = data.map(row => {
+          const rawGen = getValueByAliases(row, ['gênero', 'genero', 'sexo', 'gãªnero', 'gÃªnero']);
+          let rawDob = getValueByAliases(row, DOB_ALIASES, true);
+
+          const num = fixUtf8Mojibake(getValueByAliases(row, ['número', 'numero', 'nÚmero', 'nº', 'numero peito', 'nãºmero', 'nâºmero', 'nÃºmero']));
+          const doc = fixUtf8Mojibake(getValueByAliases(row, ['documento', 'cpf', 'doc']));
+          const name = fixUtf8Mojibake(getValueByAliases(row, ['participante', 'nome', 'atleta']));
+
+          // Check live registrations first if rawDob is empty
+          if (!rawDob) {
+            const cleanDoc = doc ? doc.replace(/\D/g, '') : '';
+            const cleanName = name ? name.toLowerCase().trim() : '';
+            const foundReg = registrations.find(r =>
+              (num && String(r.numero).trim() === num.trim()) ||
+              (cleanDoc && r.cpf && r.cpf.replace(/\D/g, '') === cleanDoc) ||
+              (cleanName && `${r.nome || ''} ${r.sobrenome || ''}`.trim().toLowerCase() === cleanName) ||
+              (cleanName && r.nome && r.nome.trim().toLowerCase() === cleanName)
+            );
+            if (foundReg?.dataNascimento) {
+              rawDob = foundReg.dataNascimento;
+            }
+          }
+
+          // Fallback to static initial dataset
+          if (!rawDob) {
+            const foundInit = INITIAL_RESULTS_DATA.find(i =>
+              (num && i.numero === num) ||
+              (doc && i.documento && i.documento.replace(/\D/g, '') === doc.replace(/\D/g, '')) ||
+              (name && i.participante.toLowerCase().trim() === name.toLowerCase().trim())
+            );
+            if (foundInit?.dataNascimento) {
+              rawDob = foundInit.dataNascimento;
+            }
+          }
+
+          return {
+            numero: num,
+            participante: name,
+            documento: doc,
+            dataNascimento: fixUtf8Mojibake(rawDob),
+            genero: parseGender(rawGen),
+            email: fixUtf8Mojibake(getValueByAliases(row, ['e-mail', 'email', 'e_mail'])),
+            telefone: fixUtf8Mojibake(getValueByAliases(row, ['telefone', 'whatsapp', 'celular', 'fone'])),
+            endereco: '',
+            modalidade: fixUtf8Mojibake(getValueByAliases(row, ['modalidade', 'distancia', 'corrida'])),
+            etinia: '',
+            bairro: '',
+            pcd: '',
+            camiseta: fixUtf8Mojibake(getValueByAliases(row, ['camiseta', 'tshirt', 't-shirt', 'tshirtsize'])),
+            tLiq: fixUtf8Mojibake(getValueByAliases(row, ['t. liq.', 't.liq.', 'tempo liquido', 't liq', 'tliq']) || '00:00:00'),
+            tBruto: fixUtf8Mojibake(getValueByAliases(row, ['t. bruto', 't.bruto', 'tempo bruto', 't bruto', 'tbruto']) || '00:00:00'),
+            pace: fixUtf8Mojibake(getValueByAliases(row, ['pace', 'ritmo']) || '00:00:00'),
+            cgcp: fixUtf8Mojibake(getValueByAliases(row, CGCP_ALIASES))
+          };
+        }).filter(r => r.participante || r.numero);
+
+        if (formattedResults.length === 0) {
+          toast.error("Nenhum resultado válido encontrado. Verifique os cabeçalhos.");
+          return;
+        }
+
+        setResultsFileName(file.name);
+        setResultsTotalRows(data.length);
+        setResultsColumnReport(report);
+        setPendingResultsData(formattedResults);
+        setShowResultsVerifyModal(true);
+      } catch (error) {
+        console.error("Erro ao importar resultados CSV:", error);
+        toast.error("Erro ao ler o arquivo CSV de resultados.");
+      }
+
+      e.target.value = '';
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleConfirmResultsImport = async () => {
+    setIsImportingResults(true);
+    const result = await importResults(pendingResultsData);
+    setIsImportingResults(false);
+    setShowResultsVerifyModal(false);
+
+    if (result.success) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
+  };
+
+  const confirmClearResults = async () => {
+    setIsClearingResults(true);
+    const result = await clearAllResults();
+    setIsClearingResults(false);
+    setShowClearResultsConfirm(false);
+
+    if (result.success) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
+  };
+
 
   const handleExportExcel = () => {
     const exportData = filteredRegistrations.map(r => ({
@@ -642,23 +954,72 @@ export default function AdminPage() {
           </h2>
           <form onSubmit={handleAuth} className="flex flex-col gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">E-mail</label>
-              <Input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} />
+              <label className="block text-sm font-medium mb-1">E-mail / Usuário</label>
+              <Input
+                type="email"
+                name="email"
+                id="admin-login-email"
+                autoComplete="username"
+                value={loginEmail}
+                onChange={e => setLoginEmail(e.target.value)}
+                placeholder="seu.email@exemplo.com"
+                required
+              />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Senha</label>
               <div className="relative">
-                <Input type={showPassword ? "text" : "password"} value={loginPassword} onChange={e => setLoginPassword(e.target.value)} className="pr-10" />
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  name="password"
+                  id="admin-login-password"
+                  autoComplete={isSignUp ? "new-password" : "current-password"}
+                  value={loginPassword}
+                  onChange={e => setLoginPassword(e.target.value)}
+                  className="pr-10"
+                  placeholder="Sua senha"
+                  required
+                />
                 <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-700">
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </div>
+            <div className="flex items-center justify-between text-sm py-1">
+              <label className="flex items-center gap-2 cursor-pointer select-none text-neutral-700 font-medium">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={e => {
+                    const isChecked = e.target.checked;
+                    setRememberMe(isChecked);
+                    if (!isChecked) {
+                      localStorage.removeItem('saved_admin_email');
+                      localStorage.removeItem('saved_admin_password');
+                      localStorage.setItem('remember_admin_credentials', 'false');
+                    } else {
+                      localStorage.setItem('remember_admin_credentials', 'true');
+                    }
+                  }}
+                  className="rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900 w-4 h-4 cursor-pointer"
+                />
+                <span>Lembrar e preencher usuário e senha automaticamente</span>
+              </label>
+            </div>
             {isSignUp && (
               <div>
                 <label className="block text-sm font-medium mb-1">Confirmar Senha</label>
                 <div className="relative">
-                  <Input type={showPassword ? "text" : "password"} value={loginConfirmPassword} onChange={e => setLoginConfirmPassword(e.target.value)} className="pr-10" />
+                  <Input
+                    type={showPassword ? "text" : "password"}
+                    name="confirm-password"
+                    id="admin-login-confirm-password"
+                    autoComplete="new-password"
+                    value={loginConfirmPassword}
+                    onChange={e => setLoginConfirmPassword(e.target.value)}
+                    className="pr-10"
+                    placeholder="Confirme sua senha"
+                  />
                   <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-700">
                     {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
@@ -681,46 +1042,6 @@ export default function AdminPage() {
             )}
             <button onClick={() => navigate('/')} className="text-neutral-400 hover:underline">Voltar ao site</button>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentAdminUser?.status === 'pending') {
-    return (
-      <div className="flex flex-col items-center justify-center max-w-lg mx-auto w-full pt-16 gap-6 text-center">
-        <Logo />
-        <div className="bg-white p-8 rounded-xl shadow-sm border border-neutral-200 w-full flex flex-col items-center">
-          <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-4">
-            <ShieldAlert size={36} />
-          </div>
-          <h2 className="text-xl font-bold text-neutral-900 mb-2">Aguardando Aprovação</h2>
-          <p className="text-sm text-neutral-600 mb-6 leading-relaxed">
-            Sua conta (<strong>{currentAdminUser.email}</strong>) foi registrada. Para acessar a área administrativa, o <strong>Administrador Master</strong> precisa aprovar seu cadastro.
-          </p>
-          <Button onClick={handleLogout} className="bg-neutral-900 text-white w-full">
-            Sair / Voltar ao Início
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentAdminUser?.status === 'rejected') {
-    return (
-      <div className="flex flex-col items-center justify-center max-w-lg mx-auto w-full pt-16 gap-6 text-center">
-        <Logo />
-        <div className="bg-white p-8 rounded-xl shadow-sm border border-neutral-200 w-full flex flex-col items-center">
-          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-4">
-            <UserX size={36} />
-          </div>
-          <h2 className="text-xl font-bold text-neutral-900 mb-2">Acesso Recusado</h2>
-          <p className="text-sm text-neutral-600 mb-6 leading-relaxed">
-            O acesso da sua conta (<strong>{currentAdminUser.email}</strong>) foi recusado pelo Administrador Master.
-          </p>
-          <Button onClick={handleLogout} className="bg-neutral-900 text-white w-full">
-            Sair / Voltar ao Início
-          </Button>
         </div>
       </div>
     );
@@ -833,17 +1154,18 @@ export default function AdminPage() {
           <Users size={18} /> Inscritos
         </button>
         <button 
+          onClick={() => setActiveTab('results')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md font-medium text-sm whitespace-nowrap transition-colors ${activeTab === 'results' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
+        >
+          <Trophy size={18} /> Importar & Resultados
+        </button>
+        <button 
           onClick={() => setActiveTab('config')}
           className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md font-medium text-sm whitespace-nowrap transition-colors ${activeTab === 'config' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
         >
           <Settings size={18} /> Configurações Gerais
         </button>
-        <button 
-          onClick={() => setActiveTab('users')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md font-medium text-sm whitespace-nowrap transition-colors ${activeTab === 'users' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}
-        >
-          <Shield size={18} /> Usuários {adminUsers.filter(u => u.status === 'pending').length > 0 && <span className="bg-amber-500 text-white text-xs px-1.5 py-0.5 rounded-full font-bold">{adminUsers.filter(u => u.status === 'pending').length}</span>}
-        </button>
+
       </div>
 
       {activeTab === 'config' && (
@@ -865,6 +1187,19 @@ export default function AdminPage() {
                       className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.isActive ? 'bg-green-500' : 'bg-neutral-300'}`}
                     >
                       <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.isActive ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </button>
+                  </div>
+                  
+                  <div className="flex items-center justify-between border-t border-neutral-100 pt-4">
+                    <div>
+                      <span className="font-medium block text-sm">Permitir novos administradores</span>
+                      <span className="text-xs text-neutral-500">Permite que outras pessoas criem contas de administrador.</span>
+                    </div>
+                    <button 
+                      onClick={() => setConfig({ ...config, allowAdminRegistration: config.allowAdminRegistration === false ? true : false })}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.allowAdminRegistration !== false ? 'bg-green-500' : 'bg-neutral-300'}`}
+                    >
+                      <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.allowAdminRegistration !== false ? 'translate-x-5' : 'translate-x-0'}`} />
                     </button>
                   </div>
 
@@ -1438,7 +1773,7 @@ export default function AdminPage() {
                     <p className="text-sm text-neutral-500 flex-1">Importe cadastros via CSV. <a href="#" onClick={(e) => { e.preventDefault(); handleDownloadCSVTemplate(); }} className="text-blue-600 hover:underline">Baixe o modelo aqui</a>.</p>
                     <label className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-md font-medium text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:ring-offset-2 bg-neutral-900 text-white hover:bg-neutral-800 cursor-pointer">
                       <FileUp size={16} /> Selecionar e Importar CSV
-                      <input type="file" accept=".csv" className="hidden" onChange={handleImportCSV} />
+                      <input type="file" accept=".csv" className="hidden" onChange={handleVerifyRegistrationsCSV} />
                     </label>
                   </div>
                 </div>
@@ -1603,25 +1938,14 @@ export default function AdminPage() {
                       <td className="p-3 font-bold">{r.tshirtSize || '-'}</td>
                       <td className="p-3 text-center flex items-center justify-center gap-2">
                         <button 
-                          onClick={() => setEditingRegistration({ ...r })}
+                          onClick={() => window.open(`/?cpf=${r.cpf}&admin=true`, '_blank')}
                           className="text-neutral-500 hover:text-neutral-900 transition-colors p-1 rounded hover:bg-neutral-200"
                           title="Editar Cadastro"
                         >
                           <Edit size={16} />
                         </button>
                         <button 
-                          onClick={() => {
-                            const canDelete = currentAdminUser?.role === 'master' || currentAdminUser?.permissions?.canDeleteRegistrations;
-                            if (!canDelete) {
-                              toast.error('Você não tem permissão para excluir inscritos.');
-                              return;
-                            }
-                            if (r.id) {
-                              handleDeleteIndividual(r.id);
-                            } else {
-                              toast.error('ID do cadastro não encontrado.');
-                            }
-                          }}
+                          onClick={() => handleDeleteIndividual(r.id!)}
                           className="text-red-400 hover:text-red-600 transition-colors p-1 rounded hover:bg-red-50"
                           title="Excluir Cadastro"
                         >
@@ -1667,175 +1991,144 @@ export default function AdminPage() {
         </div>
       )}
 
-      {activeTab === 'users' && (
-        <div className="flex flex-col gap-6">
+      {activeTab === 'results' && (
+        <div className="flex flex-col gap-6 max-w-5xl mx-auto w-full">
           <div className="bg-white p-6 rounded-lg shadow-sm border border-neutral-200 flex flex-col gap-6">
-            <div className="flex items-center justify-between pb-4 border-b border-neutral-100">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-4">
               <div>
-                <h3 className="text-lg font-bold flex items-center gap-2"><Shield size={20} /> Usuários Administradores ({adminUsers.length})</h3>
-                <p className="text-xs text-neutral-500 mt-1">Gerencie os acessos, aprovações e políticas de permissão da área administrativa.</p>
+                <h3 className="text-lg font-bold text-neutral-900 flex items-center gap-2">
+                  <Trophy className="text-amber-500" size={20} />
+                  Gestão & Importação de Resultados (Ranking)
+                </h3>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Importe os dados oficiais da corrida em formato CSV com os tempos dos participantes.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => navigate('/resultados')}
+                  className="bg-amber-500 text-neutral-950 font-bold hover:bg-amber-400 text-xs"
+                >
+                  Ver Página /resultados
+                </Button>
               </div>
             </div>
 
-            <div className="flex items-center justify-between p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-              <div>
-                <span className="font-medium block text-sm text-neutral-900">Permitir cadastro de novos Administradores</span>
-                <span className="text-xs text-neutral-500">Permite que novas pessoas criem conta na tela de login do Admin. Os novos cadastros dependerão da aprovação do Admin Master.</span>
+            {/* CSV Import Tools */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-neutral-50 p-4 rounded-lg border border-neutral-200 flex flex-col gap-3 justify-between">
+                <div>
+                  <h4 className="font-semibold text-sm text-neutral-800 flex items-center gap-2">
+                    <FileUp size={16} className="text-amber-600" />
+                    Importar Resultados CSV
+                  </h4>
+                  <p className="text-xs text-neutral-500 mt-1">
+                    Selecione o arquivo CSV com a lista de tempos e resultados.
+                  </p>
+                </div>
+                <label className="cursor-pointer inline-flex items-center justify-center gap-2 bg-neutral-900 hover:bg-neutral-800 text-white font-medium py-2 px-4 rounded-md text-xs transition-colors">
+                  <Upload size={14} />
+                  <span>Escolher Arquivo CSV</span>
+                  <input
+                    type="file"
+                    accept=".csv, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    onChange={handleVerifyResultsCSV}
+                    className="hidden"
+                  />
+                </label>
               </div>
-              <button 
-                onClick={async () => {
-                  if (!config) return;
-                  const updated = { ...config, allowAdminRegistration: config.allowAdminRegistration === false ? true : false };
-                  setConfig(updated);
-                  await updateConfig(updated);
-                  toast.success('Configuração de cadastro de administradores atualizada!');
-                }}
-                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${config.allowAdminRegistration !== false ? 'bg-green-500' : 'bg-neutral-300'}`}
-              >
-                <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.allowAdminRegistration !== false ? 'translate-x-5' : 'translate-x-0'}`} />
-              </button>
+
+              <div className="bg-neutral-50 p-4 rounded-lg border border-neutral-200 flex flex-col gap-3 justify-between">
+                <div>
+                  <h4 className="font-semibold text-sm text-neutral-800 flex items-center gap-2">
+                    <FileDown size={16} className="text-blue-600" />
+                    Baixar Modelo CSV
+                  </h4>
+                  <p className="text-xs text-neutral-500 mt-1">
+                    Baixe o modelo com o cabeçalho correto de colunas de resultados.
+                  </p>
+                </div>
+                <button
+                  onClick={handleDownloadResultsTemplate}
+                  className="inline-flex items-center justify-center gap-2 bg-white hover:bg-neutral-100 text-neutral-800 border border-neutral-300 font-medium py-2 px-4 rounded-md text-xs transition-colors"
+                >
+                  <Download size={14} />
+                  <span>Baixar Modelo CSV</span>
+                </button>
+              </div>
+
+              <div className="bg-neutral-50 p-4 rounded-lg border border-neutral-200 flex flex-col gap-3 justify-between">
+                <div>
+                  <h4 className="font-semibold text-sm text-red-800 flex items-center gap-2">
+                    <Trash2 size={16} className="text-red-600" />
+                    Limpar Resultados
+                  </h4>
+                  <p className="text-xs text-neutral-500 mt-1">
+                    Apaga todos os registros de resultados importados.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowClearResultsConfirm(true)}
+                  className="inline-flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-medium py-2 px-4 rounded-md text-xs transition-colors"
+                >
+                  <Trash size={14} />
+                  <span>Limpar Resultados</span>
+                </button>
+              </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-neutral-100 text-neutral-600">
-                  <tr>
-                    <th className="p-3 rounded-tl">Usuário (E-mail)</th>
-                    <th className="p-3">Função</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3">Data de Cadastro</th>
-                    <th className="p-3 rounded-tr text-center">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adminUsers.map(user => {
-                    const isMaster = user.role === 'master';
-                    const isSelf = user.uid === currentAdminUser?.uid;
-                    const canManage = currentAdminUser?.role === 'master' || currentAdminUser?.permissions?.canManageUsers;
+            {/* Expected CSV Header Reference */}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+              <strong>Colunas CSV aceitas:</strong> <code className="bg-white px-1.5 py-0.5 rounded border border-amber-300 font-mono text-[11px]">número, Participante, Documento, Data nascimento, Gênero, E-mail, Telefone, Endereço, Modalidade, ETINIA, Informe seu bairro/região:, PCD?, CAMISETA, T. Liq., T. Bruto, Pace, C.G.CP</code>
+            </div>
 
-                    return (
-                      <tr key={user.uid} className="border-b last:border-0 hover:bg-neutral-50">
-                        <td className="p-3 font-medium">
-                          <div className="flex items-center gap-2">
-                            <span>{user.email}</span>
-                            {isSelf && <span className="text-xs bg-neutral-200 text-neutral-800 px-2 py-0.5 rounded font-bold">(Você)</span>}
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          {isMaster ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-bold bg-purple-100 text-purple-800 px-2.5 py-1 rounded-full">
-                              <ShieldCheck size={14} /> Master
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium bg-neutral-100 text-neutral-700 px-2.5 py-1 rounded-full">
-                              <User size={14} /> Admin
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3">
-                          {user.status === 'approved' && (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold bg-green-100 text-green-800 px-2.5 py-1 rounded-full">
-                              <UserCheck size={14} /> Aprovado
-                            </span>
-                          )}
-                          {user.status === 'pending' && (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full animate-pulse">
-                              <ShieldAlert size={14} /> Aguardando Aprovação
-                            </span>
-                          )}
-                          {user.status === 'rejected' && (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold bg-red-100 text-red-800 px-2.5 py-1 rounded-full">
-                              <UserX size={14} /> Recusado
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3 text-neutral-500">
-                          {user.createdAt ? new Date(user.createdAt).toLocaleDateString('pt-BR') : '-'}
-                        </td>
-                        <td className="p-3 text-center">
-                          <div className="flex items-center justify-center gap-2">
-                            {canManage && !isSelf && !isMaster && (
-                              <>
-                                {user.status === 'pending' && (
-                                  <>
-                                    <Button 
-                                      onClick={() => handleUserStatusChange(user, 'approved')} 
-                                      className="h-8 px-3 text-xs bg-green-600 hover:bg-green-700 text-white flex items-center gap-1"
-                                      disabled={isUpdatingUser}
-                                    >
-                                      <Check size={14} /> Aprovar
-                                    </Button>
-                                    <Button 
-                                      onClick={() => handleUserStatusChange(user, 'rejected')} 
-                                      className="h-8 px-3 text-xs bg-red-100 text-red-700 hover:bg-red-200 border border-red-300 flex items-center gap-1"
-                                      disabled={isUpdatingUser}
-                                    >
-                                      <X size={14} /> Recusar
-                                    </Button>
-                                  </>
-                                )}
-
-                                {user.status === 'approved' && (
-                                  <Button 
-                                    onClick={() => handleUserStatusChange(user, 'rejected')} 
-                                    className="h-8 px-2.5 text-xs bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 flex items-center gap-1"
-                                    title="Bloquear Acesso"
-                                    disabled={isUpdatingUser}
-                                  >
-                                    <Lock size={14} /> Bloquear
-                                  </Button>
-                                )}
-
-                                {user.status === 'rejected' && (
-                                  <Button 
-                                    onClick={() => handleUserStatusChange(user, 'approved')} 
-                                    className="h-8 px-2.5 text-xs bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 flex items-center gap-1"
-                                    title="Re-aprovar Acesso"
-                                    disabled={isUpdatingUser}
-                                  >
-                                    <Unlock size={14} /> Re-aprovar
-                                  </Button>
-                                )}
-
-                                <button 
-                                  onClick={() => setEditingUserPermissions(user)}
-                                  className="text-neutral-500 hover:text-neutral-900 transition-colors p-1.5 rounded hover:bg-neutral-200"
-                                  title="Editar Permissões"
-                                >
-                                  <KeyRound size={16} />
-                                </button>
-
-                                <button 
-                                  onClick={() => setDeleteAdminUserConfirm(user)}
-                                  className="text-red-400 hover:text-red-600 transition-colors p-1.5 rounded hover:bg-red-50"
-                                  title="Remover Usuário"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </>
-                            )}
-
-                            {isMaster && isSelf && (
-                              <span className="text-xs text-neutral-400 italic">Administrador Master</span>
-                            )}
-                          </div>
-                        </td>
+            {/* Current Results List Summary */}
+            <div className="border border-neutral-200 rounded-lg overflow-hidden">
+              <div className="p-3 bg-neutral-100 border-b border-neutral-200 flex items-center justify-between text-xs font-semibold text-neutral-700">
+                <span>Resultados Cadastrados no Firestore ({resultsList.length})</span>
+              </div>
+              <div className="max-h-96 overflow-y-auto">
+                {resultsList.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-neutral-500">
+                    Nenhum resultado importado via CSV no Firestore ainda. A página <code>/resultados</code> está exibindo a lista inicial. Use a opção "Escolher Arquivo CSV" para atualizar.
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-neutral-50 border-b border-neutral-200 text-neutral-600 font-bold">
+                        <th className="p-2.5">Nº</th>
+                        <th className="p-2.5">Participante</th>
+                        <th className="p-2.5">Documento</th>
+                        <th className="p-2.5">Modalidade</th>
+                        <th className="p-2.5">Gênero</th>
+                        <th className="p-2.5">T. Liq.</th>
+                        <th className="p-2.5">Pace</th>
                       </tr>
-                    );
-                  })}
-
-                  {adminUsers.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="p-4 text-center text-neutral-500">Nenhum usuário administrador cadastrado.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {resultsList.map((res, i) => (
+                        <tr key={res.id || i} className="hover:bg-neutral-50">
+                          <td className="p-2.5 font-bold font-mono text-amber-700">#{res.numero}</td>
+                          <td className="p-2.5 font-medium">{res.participante}</td>
+                          <td className="p-2.5 text-neutral-500">{res.documento}</td>
+                          <td className="p-2.5">{res.modalidade}</td>
+                          <td className="p-2.5">{res.genero}</td>
+                          <td className="p-2.5 font-mono font-bold text-neutral-900">{res.tLiq}</td>
+                          <td className="p-2.5 font-mono text-neutral-600">{res.pace}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
+
       {previewImage && (
+
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="bg-white rounded-lg overflow-hidden max-w-3xl w-full flex flex-col">
             <div className="flex justify-between items-center p-4 border-b border-neutral-200">
@@ -1917,388 +2210,385 @@ export default function AdminPage() {
           </div>
         </div>
       )}
-
-      {/* Edit Registration Modal */}
-      {editingRegistration && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full my-8 overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
-            <div className="flex justify-between items-center p-4 border-b border-neutral-200 bg-neutral-50">
-              <h3 className="font-bold text-lg text-neutral-900 flex items-center gap-2">
-                <Edit size={20} className="text-neutral-700" />
-                Editar Cadastro de {editingRegistration.nome}
-              </h3>
-              <button 
-                onClick={() => setEditingRegistration(null)} 
-                className="text-neutral-500 hover:text-black bg-neutral-100 hover:bg-neutral-200 p-1.5 rounded-full transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            
-            <form onSubmit={handleSaveEditRegistration} className="p-6 flex flex-col gap-5 max-h-[80vh] overflow-y-auto">
-              {/* Dados Pessoais */}
-              <div>
-                <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3">Dados Pessoais</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Nome *</label>
-                    <Input 
-                      type="text" 
-                      required 
-                      value={editingRegistration.nome} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, nome: e.target.value })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Sobrenome *</label>
-                    <Input 
-                      type="text" 
-                      required 
-                      value={editingRegistration.sobrenome} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, sobrenome: e.target.value })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">CPF *</label>
-                    <Input 
-                      type="text" 
-                      required 
-                      value={editingRegistration.cpf} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, cpf: maskCPF(e.target.value) })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Data de Nascimento</label>
-                    <Input 
-                      type="text" 
-                      placeholder="DD/MM/AAAA" 
-                      value={editingRegistration.dataNascimento || ''} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, dataNascimento: maskDate(e.target.value) })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Gênero</label>
-                    <Select 
-                      value={editingRegistration.genero || ''} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, genero: e.target.value })}
-                    >
-                      <option value="">Selecione</option>
-                      {(config.genders || ['Masculino', 'Feminino']).map(g => (
-                        <option key={g} value={g}>{g}</option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">PCD</label>
-                    <Select 
-                      value={editingRegistration.pcd || 'Não'} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, pcd: e.target.value })}
-                    >
-                      <option value="Não">Não</option>
-                      <option value="Sim">Sim</option>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Contato */}
-              <div className="border-t border-neutral-100 pt-4">
-                <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3">Contato</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">E-mail *</label>
-                    <Input 
-                      type="email" 
-                      required 
-                      value={editingRegistration.email} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, email: e.target.value })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">WhatsApp / Telefone *</label>
-                    <Input 
-                      type="text" 
-                      required 
-                      value={editingRegistration.whatsapp} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, whatsapp: maskPhone(e.target.value) })} 
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Opções de Inscrição */}
-              <div className="border-t border-neutral-100 pt-4">
-                <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3">Opções da Inscrição</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Kit</label>
-                    <Select 
-                      value={editingRegistration.kit} 
-                      onChange={e => {
-                        const newKit = e.target.value;
-                        setEditingRegistration({ ...editingRegistration, kit: newKit });
-                      }}
-                    >
-                      <option value="">Selecione</option>
-                      {(config.kits || []).map(k => (
-                        <option key={k.name} value={k.name}>{k.name}</option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Tamanho da Camiseta</label>
-                    <Select 
-                      value={editingRegistration.tshirtSize || ''} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, tshirtSize: e.target.value })}
-                    >
-                      <option value="">Selecione</option>
-                      {getAvailableEditSizes().map(s => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Modalidade</label>
-                    <Select 
-                      value={editingRegistration.modalidade || ''} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, modalidade: e.target.value })}
-                    >
-                      <option value="">Selecione</option>
-                      {(config.modalities || []).map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Endereço */}
-              <div className="border-t border-neutral-100 pt-4">
-                <h4 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-3">Endereço</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">CEP</label>
-                    <Input 
-                      type="text" 
-                      value={editingRegistration.cep} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, cep: maskCEP(e.target.value) })} 
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Logradouro / Rua</label>
-                    <Input 
-                      type="text" 
-                      value={editingRegistration.endereco} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, endereco: e.target.value })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Número</label>
-                    <Input 
-                      type="text" 
-                      value={editingRegistration.numero} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, numero: e.target.value })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Complemento</label>
-                    <Input 
-                      type="text" 
-                      value={editingRegistration.complemento || ''} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, complemento: e.target.value })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Bairro</label>
-                    <Input 
-                      type="text" 
-                      value={editingRegistration.bairro} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, bairro: e.target.value })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Cidade</label>
-                    <Input 
-                      type="text" 
-                      value={editingRegistration.cidade} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, cidade: e.target.value })} 
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-neutral-700 mb-1">Estado (UF)</label>
-                    <Input 
-                      type="text" 
-                      maxLength={2}
-                      value={editingRegistration.estado} 
-                      onChange={e => setEditingRegistration({ ...editingRegistration, estado: e.target.value.toUpperCase() })} 
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Botões de Ação */}
-              <div className="flex justify-end items-center gap-3 border-t border-neutral-200 pt-4 mt-2">
-                <Button 
-                  type="button" 
-                  onClick={() => setEditingRegistration(null)} 
-                  className="bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-100"
-                  disabled={isSavingEdit}
-                >
-                  Cancelar
-                </Button>
-                <Button 
-                  type="submit" 
-                  className="bg-neutral-900 text-white hover:bg-neutral-800"
-                  disabled={isSavingEdit}
-                >
-                  {isSavingEdit ? (
-                    <span className="flex items-center gap-2">
-                      <Loader2 className="animate-spin" size={16} /> Salvando...
-                    </span>
-                  ) : (
-                    'Salvar Alterações'
-                  )}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Edit User Permissions Modal */}
-      {editingUserPermissions && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
-            <div className="flex justify-between items-center p-4 border-b border-neutral-200 bg-neutral-50">
-              <h3 className="font-bold text-lg text-neutral-900 flex items-center gap-2">
-                <KeyRound size={20} className="text-neutral-700" />
-                Permissões de {editingUserPermissions.email}
-              </h3>
-              <button 
-                onClick={() => setEditingUserPermissions(null)} 
-                className="text-neutral-500 hover:text-black bg-neutral-100 hover:bg-neutral-200 p-1.5 rounded-full transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveUserPermissions} className="p-6 flex flex-col gap-4">
-              <p className="text-xs text-neutral-500 mb-2">
-                Defina quais seções e ações este usuário terá permissão para acessar no painel.
-              </p>
-
-              <div className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                <div>
-                  <span className="font-medium text-sm block text-neutral-900">Gerenciar Configurações</span>
-                  <span className="text-xs text-neutral-500">Editar kits, tamanhos, banners e regras do evento.</span>
-                </div>
-                <input 
-                  type="checkbox"
-                  checked={editingUserPermissions.permissions?.canManageConfig ?? false}
-                  onChange={e => setEditingUserPermissions({
-                    ...editingUserPermissions,
-                    permissions: { ...editingUserPermissions.permissions, canManageConfig: e.target.checked }
-                  })}
-                  className="h-5 w-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                <div>
-                  <span className="font-medium text-sm block text-neutral-900">Gerenciar Usuários</span>
-                  <span className="text-xs text-neutral-500">Aprovar, recusar e editar permissões de outros admins.</span>
-                </div>
-                <input 
-                  type="checkbox"
-                  checked={editingUserPermissions.permissions?.canManageUsers ?? false}
-                  onChange={e => setEditingUserPermissions({
-                    ...editingUserPermissions,
-                    permissions: { ...editingUserPermissions.permissions, canManageUsers: e.target.checked }
-                  })}
-                  className="h-5 w-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                <div>
-                  <span className="font-medium text-sm block text-neutral-900">Excluir Registros</span>
-                  <span className="text-xs text-neutral-500">Excluir inscritos individualmente e limpar banco.</span>
-                </div>
-                <input 
-                  type="checkbox"
-                  checked={editingUserPermissions.permissions?.canDeleteRegistrations ?? false}
-                  onChange={e => setEditingUserPermissions({
-                    ...editingUserPermissions,
-                    permissions: { ...editingUserPermissions.permissions, canDeleteRegistrations: e.target.checked }
-                  })}
-                  className="h-5 w-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-neutral-50 rounded-lg border border-neutral-200">
-                <div>
-                  <span className="font-medium text-sm block text-neutral-900">Exportar Dados e Backups</span>
-                  <span className="text-xs text-neutral-500">Baixar relatórios Excel e backups CSV.</span>
-                </div>
-                <input 
-                  type="checkbox"
-                  checked={editingUserPermissions.permissions?.canExportData ?? false}
-                  onChange={e => setEditingUserPermissions({
-                    ...editingUserPermissions,
-                    permissions: { ...editingUserPermissions.permissions, canExportData: e.target.checked }
-                  })}
-                  className="h-5 w-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
-                />
-              </div>
-
-              <div className="flex justify-end items-center gap-3 border-t border-neutral-200 pt-4 mt-2">
-                <Button 
-                  type="button" 
-                  onClick={() => setEditingUserPermissions(null)} 
-                  className="bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-100"
-                  disabled={isUpdatingUser}
-                >
-                  Cancelar
-                </Button>
-                <Button 
-                  type="submit" 
-                  className="bg-neutral-900 text-white hover:bg-neutral-800"
-                  disabled={isUpdatingUser}
-                >
-                  {isUpdatingUser ? 'Salvando...' : 'Salvar Permissões'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Admin User Modal */}
-      {deleteAdminUserConfirm && (
+      {/* Confirmation Modal for Results Clear */}
+      {showClearResultsConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
             <div className="flex flex-col items-center justify-center p-6 text-center">
               <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-4">
                 <Trash2 size={32} />
               </div>
-              <h3 className="text-xl font-bold text-neutral-900 mb-2">Remover Usuário</h3>
+              <h3 className="text-xl font-bold text-neutral-900 mb-2">Limpar Resultados</h3>
               <p className="text-sm text-neutral-600 mb-6">
-                Tem certeza que deseja remover o usuário <strong>{deleteAdminUserConfirm.email}</strong> da lista de administradores?
+                ATENÇÃO: Você está prestes a apagar <strong>TODOS OS RESULTADOS</strong> da corrida salvos no banco de dados. Esta ação é irreversível.
               </p>
-              <div className="flex gap-3 w-full">
+              
+              <div className="flex items-center gap-3 w-full">
                 <Button 
-                  onClick={() => setDeleteAdminUserConfirm(null)} 
-                  className="flex-1 bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-50"
-                  disabled={isUpdatingUser}
+                  onClick={() => setShowClearResultsConfirm(false)} 
+                  className="flex-1 bg-neutral-200 hover:bg-neutral-300 text-neutral-800"
+                  disabled={isClearingResults}
                 >
                   Cancelar
                 </Button>
                 <Button 
-                  onClick={confirmDeleteAdminUser} 
-                  className="flex-1 bg-red-600 text-white hover:bg-red-700 border border-red-700"
-                  disabled={isUpdatingUser}
+                  onClick={confirmClearResults} 
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                  disabled={isClearingResults}
                 >
-                  {isUpdatingUser ? 'Removendo...' : 'Remover'}
+                  {isClearingResults ? 'Apagando...' : 'Apagar Resultados'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Verification Modal for Results CSV */}
+      {showResultsVerifyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-neutral-200 animate-in fade-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div className="p-5 bg-neutral-900 text-white flex items-center justify-between border-b border-neutral-800">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <Trophy className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold">Conferência de Colunas - Resultados CSV</h3>
+                  <p className="text-xs text-neutral-400">Verificação prévia das colunas do arquivo antes da importação</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowResultsVerifyModal(false)}
+                className="text-neutral-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-neutral-800"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 text-neutral-800">
+              {/* Stat Badges */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-neutral-50 border border-neutral-200 p-3 rounded-lg">
+                  <span className="text-xs text-neutral-500 font-medium block">Arquivo Lido</span>
+                  <span className="text-sm font-bold text-neutral-900 truncate block" title={resultsFileName}>{resultsFileName}</span>
+                </div>
+                <div className="bg-neutral-50 border border-neutral-200 p-3 rounded-lg">
+                  <span className="text-xs text-neutral-500 font-medium block">Linhas / Registros</span>
+                  <span className="text-sm font-bold text-neutral-900 block">{resultsTotalRows} linhas ({pendingResultsData.length} válidos)</span>
+                </div>
+                <div className={`border p-3 rounded-lg ${
+                  resultsColumnReport.filter(r => r.found).length === resultsColumnReport.length 
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}>
+                  <span className="text-xs font-medium block opacity-80">Conferência das Colunas</span>
+                  <span className="text-sm font-bold block">
+                    {resultsColumnReport.filter(r => r.found).length} de {resultsColumnReport.length} colunas encontradas
+                  </span>
+                </div>
+              </div>
+
+              {/* Column Verification Table */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-600" />
+                    Status da Verificação de Colunas (Separadas por vírgula / ponto e vírgula)
+                  </h4>
+                  <span className="text-xs text-neutral-500">
+                    {resultsColumnReport.filter(r => r.found).length === resultsColumnReport.length 
+                      ? '✓ Todas as colunas foram conferidas com sucesso' 
+                      : '⚠ Algumas colunas não foram encontradas no CSV'}
+                  </span>
+                </div>
+
+                <div className="border border-neutral-200 rounded-lg overflow-hidden max-h-60 overflow-y-auto bg-white text-xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-neutral-100 sticky top-0 border-b border-neutral-200 font-bold text-neutral-700">
+                      <tr>
+                        <th className="p-2.5">Coluna Oficial Esperada</th>
+                        <th className="p-2.5">Cabeçalho Encontrado no CSV</th>
+                        <th className="p-2.5">Exemplo Extraído (Linha 1)</th>
+                        <th className="p-2.5 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100 font-mono">
+                      {resultsColumnReport.map((col, idx) => (
+                        <tr key={idx} className={col.found ? 'hover:bg-neutral-50' : 'bg-amber-50/40 hover:bg-amber-50'}>
+                          <td className="p-2.5 font-bold text-neutral-900">{col.expectedName}</td>
+                          <td className="p-2.5">
+                            {col.matchedHeader ? (
+                              <span className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-300 text-neutral-800">
+                                {col.matchedHeader}
+                              </span>
+                            ) : (
+                              <span className="text-neutral-400 italic">--- Ausente ---</span>
+                            )}
+                          </td>
+                          <td className="p-2.5 text-neutral-600 truncate max-w-[200px]" title={col.sampleValue || '(vazio)'}>
+                            {col.sampleValue || <span className="text-neutral-300 italic">(vazio)</span>}
+                          </td>
+                          <td className="p-2.5 text-center font-sans font-semibold">
+                            {col.found ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <Check size={12} /> Conferida
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-800 border border-amber-200">
+                                ! Ausente
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Data Sample Preview */}
+              <div className="space-y-2">
+                <h4 className="text-sm font-bold text-neutral-900">
+                  Pré-visualização dos Registros (Primeiros 5 resultados)
+                </h4>
+                <div className="border border-neutral-200 rounded-lg overflow-x-auto bg-white text-xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-neutral-100 border-b border-neutral-200 font-bold text-neutral-700">
+                      <tr>
+                        <th className="p-2">Nº</th>
+                        <th className="p-2">Participante</th>
+                        <th className="p-2">Documento</th>
+                        <th className="p-2">Modalidade</th>
+                        <th className="p-2">Gênero</th>
+                        <th className="p-2">T. Liq.</th>
+                        <th className="p-2">Pace</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100 font-mono">
+                      {pendingResultsData.slice(0, 5).map((item, i) => (
+                        <tr key={i} className="hover:bg-neutral-50">
+                          <td className="p-2 font-bold text-amber-700">#{item.numero}</td>
+                          <td className="p-2 font-sans font-semibold text-neutral-900">{item.participante}</td>
+                          <td className="p-2 text-neutral-500">{item.documento || '-'}</td>
+                          <td className="p-2 font-sans">{item.modalidade || '-'}</td>
+                          <td className="p-2 font-sans">{item.genero || '-'}</td>
+                          <td className="p-2 font-bold text-neutral-900">{item.tLiq}</td>
+                          <td className="p-2 text-neutral-600">{item.pace}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-neutral-100 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <span className="text-xs text-neutral-600">
+                Verificação de colunas concluída. Clique no botão ao lado para confirmar e realizar a importação.
+              </span>
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <Button 
+                  onClick={() => setShowResultsVerifyModal(false)}
+                  className="w-full sm:w-auto bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-50"
+                  disabled={isImportingResults}
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  onClick={handleConfirmResultsImport}
+                  className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white font-bold px-6 py-2.5 shadow-md flex items-center justify-center gap-2"
+                  disabled={isImportingResults}
+                >
+                  {isImportingResults ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Importando Resultados...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} />
+                      <span>Confirmar e Importar Resultados ({pendingResultsData.length} registros)</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Verification Modal for Registrations CSV */}
+      {showRegVerifyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-neutral-200 animate-in fade-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div className="p-5 bg-neutral-900 text-white flex items-center justify-between border-b border-neutral-800">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                  <FileUp className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold">Conferência de Colunas - Inscrições CSV</h3>
+                  <p className="text-xs text-neutral-400">Verificação prévia das colunas do arquivo antes da importação</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowRegVerifyModal(false)}
+                className="text-neutral-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-neutral-800"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 text-neutral-800">
+              {/* Stat Badges */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-neutral-50 border border-neutral-200 p-3 rounded-lg">
+                  <span className="text-xs text-neutral-500 font-medium block">Arquivo Lido</span>
+                  <span className="text-sm font-bold text-neutral-900 truncate block" title={regFileName}>{regFileName}</span>
+                </div>
+                <div className="bg-neutral-50 border border-neutral-200 p-3 rounded-lg">
+                  <span className="text-xs text-neutral-500 font-medium block">Linhas / Registros</span>
+                  <span className="text-sm font-bold text-neutral-900 block">{regTotalRows} linhas ({pendingRegData.length} válidos)</span>
+                </div>
+                <div className={`border p-3 rounded-lg ${
+                  regColumnReport.filter(r => r.found).length === regColumnReport.length 
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}>
+                  <span className="text-xs font-medium block opacity-80">Conferência das Colunas</span>
+                  <span className="text-sm font-bold block">
+                    {regColumnReport.filter(r => r.found).length} de {regColumnReport.length} colunas encontradas
+                  </span>
+                </div>
+              </div>
+
+              {/* Column Verification Table */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-neutral-900 flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-600" />
+                    Status da Verificação de Colunas (Separadas por vírgula / ponto e vírgula)
+                  </h4>
+                  <span className="text-xs text-neutral-500">
+                    {regColumnReport.filter(r => r.found).length === regColumnReport.length 
+                      ? '✓ Todas as colunas foram conferidas com sucesso' 
+                      : '⚠ Algumas colunas não foram encontradas no CSV'}
+                  </span>
+                </div>
+
+                <div className="border border-neutral-200 rounded-lg overflow-hidden max-h-60 overflow-y-auto bg-white text-xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-neutral-100 sticky top-0 border-b border-neutral-200 font-bold text-neutral-700">
+                      <tr>
+                        <th className="p-2.5">Coluna Oficial Esperada</th>
+                        <th className="p-2.5">Cabeçalho Encontrado no CSV</th>
+                        <th className="p-2.5">Exemplo Extraído (Linha 1)</th>
+                        <th className="p-2.5 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100 font-mono">
+                      {regColumnReport.map((col, idx) => (
+                        <tr key={idx} className={col.found ? 'hover:bg-neutral-50' : 'bg-amber-50/40 hover:bg-amber-50'}>
+                          <td className="p-2.5 font-bold text-neutral-900">{col.expectedName}</td>
+                          <td className="p-2.5">
+                            {col.matchedHeader ? (
+                              <span className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-300 text-neutral-800">
+                                {col.matchedHeader}
+                              </span>
+                            ) : (
+                              <span className="text-neutral-400 italic">--- Ausente ---</span>
+                            )}
+                          </td>
+                          <td className="p-2.5 text-neutral-600 truncate max-w-[200px]" title={col.sampleValue || '(vazio)'}>
+                            {col.sampleValue || <span className="text-neutral-300 italic">(vazio)</span>}
+                          </td>
+                          <td className="p-2.5 text-center font-sans font-semibold">
+                            {col.found ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <Check size={12} /> Conferida
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-800 border border-amber-200">
+                                ! Ausente
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Data Sample Preview */}
+              <div className="space-y-2">
+                <h4 className="text-sm font-bold text-neutral-900">
+                  Pré-visualização dos Registros (Primeiras 5 inscrições)
+                </h4>
+                <div className="border border-neutral-200 rounded-lg overflow-x-auto bg-white text-xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-neutral-100 border-b border-neutral-200 font-bold text-neutral-700">
+                      <tr>
+                        <th className="p-2">Nome</th>
+                        <th className="p-2">CPF</th>
+                        <th className="p-2">Data Nasc.</th>
+                        <th className="p-2">Gênero</th>
+                        <th className="p-2">Modalidade</th>
+                        <th className="p-2">Camiseta</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100 font-mono">
+                      {pendingRegData.slice(0, 5).map((item, i) => (
+                        <tr key={i} className="hover:bg-neutral-50">
+                          <td className="p-2 font-sans font-semibold text-neutral-900">{item.nome} {item.sobrenome}</td>
+                          <td className="p-2 text-neutral-500">{item.cpf || '-'}</td>
+                          <td className="p-2 font-sans">{item.dataNascimento || '-'}</td>
+                          <td className="p-2 font-sans">{item.genero || '-'}</td>
+                          <td className="p-2 font-sans">{item.modalidade || '-'}</td>
+                          <td className="p-2 font-sans font-bold">{item.tshirtSize || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-neutral-100 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <span className="text-xs text-neutral-600">
+                Verificação de colunas concluída. Clique no botão ao lado para confirmar e realizar a importação.
+              </span>
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <Button 
+                  onClick={() => setShowRegVerifyModal(false)}
+                  className="w-full sm:w-auto bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-50"
+                  disabled={isImportingRegs}
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  onClick={handleConfirmRegistrationsImport}
+                  className="w-full sm:w-auto bg-neutral-900 hover:bg-neutral-800 text-white font-bold px-6 py-2.5 shadow-md flex items-center justify-center gap-2"
+                  disabled={isImportingRegs}
+                >
+                  {isImportingRegs ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Importando Inscrições...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileUp size={16} />
+                      <span>Confirmar e Importar Inscrições ({pendingRegData.length} registros)</span>
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
@@ -2308,3 +2598,4 @@ export default function AdminPage() {
     </div>
   );
 }
+

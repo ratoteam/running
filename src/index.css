@@ -1,1 +1,42 @@
 @import "tailwindcss";
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 0;
+  }
+  html, body {
+    width: 297mm !important;
+    height: 210mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  body * {
+    visibility: hidden;
+  }
+  #certificate-print-area, #certificate-print-area * {
+    visibility: visible;
+  }
+  #certificate-print-area {
+    position: absolute !important;
+    left: 8mm !important;
+    top: 8mm !important;
+    width: 281mm !important;
+    height: 194mm !important;
+    box-sizing: border-box !important;
+    border: 5px solid #f59e0b !important;
+    background: #fffbeb !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 8mm 12mm !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    page-break-inside: avoid !important;
+    page-break-after: avoid !important;
+  }
+}
+

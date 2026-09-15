@@ -53,25 +53,30 @@ export interface Registration {
   genero?: string;
   modalidade?: string;
   pcd?: string;
-  isAdmin?: boolean;
+  isAdmin: boolean;
   createdAt: number;
 }
 
-export interface AdminUserPermissions {
-  canManageConfig: boolean;
-  canManageUsers: boolean;
-  canDeleteRegistrations: boolean;
-  canExportData: boolean;
-}
-
-export interface AdminUser {
-  uid: string;
-  email: string;
-  role: 'master' | 'admin';
-  status: 'approved' | 'pending' | 'rejected';
-  createdAt: number;
-  approvedBy?: string;
-  approvedAt?: number;
-  permissions: AdminUserPermissions;
+export interface ResultItem {
+  id?: string;
+  numero: string;
+  participante: string;
+  documento: string;
+  dataNascimento?: string;
+  genero?: string;
+  categoria?: string;
+  email?: string;
+  telefone?: string;
+  endereco?: string;
+  modalidade?: string;
+  etinia?: string;
+  bairro?: string;
+  pcd?: string;
+  camiseta?: string;
+  tLiq: string;
+  tBruto: string;
+  pace: string;
+  cgcp?: string;
+  createdAt?: number;
 }
 

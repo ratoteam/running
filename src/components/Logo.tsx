@@ -25,28 +25,18 @@ export function Logo({ config = DEFAULT_CONFIG }: { config?: AppConfig }) {
   };
 
   const scale = config.topBannerScale ? config.topBannerScale / 100 : 1;
-  const mobileScale = scale * 1.1;
 
   return (
     <div className="flex flex-col w-full overflow-hidden bg-transparent mb-8 relative gap-6">
       {config.topBannerEnabled && config.topBannerUrl && (
-        <div className="w-full h-[212px] md:h-64 lg:h-72 relative shrink-0 overflow-hidden rounded-lg">
-          <style>{`
-            .banner-img-responsive {
-              transform: scale(${mobileScale});
-            }
-            @media (min-width: 768px) {
-              .banner-img-responsive {
-                transform: scale(${scale});
-              }
-            }
-          `}</style>
+        <div className="w-full h-48 md:h-64 lg:h-72 relative shrink-0">
           <img 
             src={config.topBannerUrl} 
             alt="Banner do Evento" 
-            className={`w-full h-full transition-transform duration-300 banner-img-responsive ${config.topBannerFit === 'contain' ? 'object-contain bg-transparent' : 'object-cover'}`}
+            className={`w-full h-full transition-transform duration-300 ${config.topBannerFit === 'contain' ? 'object-contain bg-transparent' : 'object-cover'}`}
             style={{ 
-              objectPosition: getObjectPosition()
+              objectPosition: getObjectPosition(),
+              transform: `scale(${scale})`
             }}
             onError={(e) => { e.currentTarget.style.display = 'none' }} 
           />

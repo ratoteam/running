@@ -4,11 +4,11 @@ import { toast } from 'react-toastify';
 import { Logo } from '../components/Logo';
 import { Button, Input, Select } from '../components/ui';
 import { AppConfig, Registration } from '../types';
-import { getConfig, subscribeToConfig, subscribeToRegistrations, submitRegistration, initConfig, getRegistrationByCpf, ensureAdminUserRecord } from '../lib/db';
+import { getConfig, subscribeToConfig, subscribeToRegistrations, submitRegistration, initConfig, getRegistrationByCpf } from '../lib/db';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { auth } from '../lib/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
-import { Eye, EyeOff, X } from 'lucide-react';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { Eye, EyeOff, X, Trophy } from 'lucide-react';
 
 type FormValues = Omit<Registration, 'isAdmin' | 'createdAt' | 'id'> & { id?: string };
 
@@ -63,7 +63,6 @@ export default function RegistrationPage() {
   const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [isAdminSignUp, setIsAdminSignUp] = useState(false);
   const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
-  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,27 +77,11 @@ export default function RegistrationPage() {
     }
     setIsAdminLoginLoading(true);
     try {
-      let userCred;
       if (isAdminSignUp) {
-        userCred = await createUserWithEmailAndPassword(auth, adminEmail, adminPassword);
+        await createUserWithEmailAndPassword(auth, adminEmail, adminPassword);
       } else {
-        userCred = await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
+        await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
       }
-      
-      const adminRecord = await ensureAdminUserRecord(userCred.user.uid, userCred.user.email || adminEmail);
-      
-      if (adminRecord.status === 'pending') {
-        await signOut(auth);
-        setAdminLoginError('Sua conta foi criada/acessada, porém está aguardando aprovação do Administrador Master.');
-        return;
-      }
-
-      if (adminRecord.status === 'rejected') {
-        await signOut(auth);
-        setAdminLoginError('Seu acesso de administrador foi recusado.');
-        return;
-      }
-
       setShowAdminLoginModal(false);
       navigate('/admin');
     } catch (e: any) {
@@ -314,6 +297,17 @@ export default function RegistrationPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Top Bar with Ranking & Resultados Button at Top Right */}
+      <div className="flex justify-end items-center w-full">
+        <button
+          onClick={() => navigate('/resultados')}
+          className="inline-flex items-center gap-2 text-xs sm:text-sm font-bold bg-amber-500 hover:bg-amber-400 text-neutral-950 px-4 py-2.5 rounded-xl transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0"
+        >
+          <Trophy className="w-4.5 h-4.5 text-neutral-950" />
+          <span>Ranking & Resultados</span>
+        </button>
+      </div>
+
       <Logo config={config} />
       
       
@@ -348,7 +342,7 @@ export default function RegistrationPage() {
           </div>
           <Button 
             type="button" 
-            onClick={() => navigate('/admin')}
+            onClick={() => window.location.href = '/admin'}
             className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
           >
             Voltar ao Painel
@@ -601,27 +595,10 @@ export default function RegistrationPage() {
           </div>
         </div>
 
-        {!isAdminAction && (
-          <div className="bg-neutral-50 p-4 rounded-lg border border-neutral-200 flex flex-col gap-2">
-            <span className="text-sm font-bold text-neutral-900">Declaração:</span>
-            <label className="flex items-start gap-3 cursor-pointer select-none">
-              <input 
-                type="checkbox" 
-                checked={acceptedTerms}
-                onChange={(e) => setAcceptedTerms(e.target.checked)}
-                className="mt-0.5 w-5 h-5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900 cursor-pointer shrink-0"
-              />
-              <span className="text-sm text-neutral-700 leading-snug">
-                Declaro que estou apto fisicamente, estando de acordo com o regulamento para participar do evento.
-              </span>
-            </label>
-          </div>
-        )}
-
         <Button 
           type="submit" 
-          className="w-full mt-2 h-14 text-lg font-bold tracking-wide uppercase transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed" 
-          disabled={isEsgotado || submitting || cpfExists || (!isAdminAction && !acceptedTerms)}
+          className="w-full mt-2 h-14 text-lg font-bold tracking-wide uppercase transition-all shadow-md hover:shadow-lg" 
+          disabled={isEsgotado || submitting || cpfExists}
         >
           {submitting ? 'Processando...' : isEsgotado ? 'Inscrições Encerradas' : cpfExists ? 'Cadastro Já Realizado' : isAdminAction ? 'Salvar Alterações' : 'Confirmar Inscrição'}
         </Button>
