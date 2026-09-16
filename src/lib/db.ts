@@ -7,10 +7,19 @@ export const REGISTRATIONS_COL = 'registrations';
 export const RESULTS_COL = 'results';
 
 export async function subscribeToResults(callback: (results: ResultItem[]) => void) {
-  return onSnapshot(collection(db, RESULTS_COL), (snapshot) => {
-    const res = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ResultItem));
-    callback(res);
-  });
+  try {
+    return onSnapshot(collection(db, RESULTS_COL), (snapshot) => {
+      const res = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ResultItem));
+      callback(res);
+    }, (error) => {
+      console.warn("Erro no snapshot de resultados:", error);
+      callback([]);
+    });
+  } catch (err) {
+    console.warn("Erro ao iniciar escuta de resultados:", err);
+    callback([]);
+    return () => {};
+  }
 }
 
 export async function importResults(results: Omit<ResultItem, 'id'>[]): Promise<{ success: boolean; message: string }> {
@@ -102,18 +111,26 @@ export const DEFAULT_CONFIG: AppConfig = {
 };
 
 export async function initConfig() {
-  const ref = doc(db, CONFIG_DOC);
-  const snapshot = await getDoc(ref);
-  if (!snapshot.exists()) {
-    await setDoc(ref, DEFAULT_CONFIG);
+  try {
+    const ref = doc(db, CONFIG_DOC);
+    const snapshot = await getDoc(ref);
+    if (!snapshot.exists()) {
+      await setDoc(ref, DEFAULT_CONFIG);
+    }
+  } catch (error) {
+    console.warn("Erro ao inicializar configurações no Firestore:", error);
   }
 }
 
 export async function getConfig(): Promise<AppConfig> {
-  const ref = doc(db, CONFIG_DOC);
-  const snapshot = await getDoc(ref);
-  if (snapshot.exists()) {
-    return snapshot.data() as AppConfig;
+  try {
+    const ref = doc(db, CONFIG_DOC);
+    const snapshot = await getDoc(ref);
+    if (snapshot.exists()) {
+      return snapshot.data() as AppConfig;
+    }
+  } catch (error) {
+    console.warn("Erro ao buscar configurações:", error);
   }
   return DEFAULT_CONFIG;
 }
@@ -124,18 +141,38 @@ export async function updateConfig(config: AppConfig) {
 }
 
 export function subscribeToConfig(callback: (config: AppConfig) => void) {
-  return onSnapshot(doc(db, CONFIG_DOC), (doc) => {
-    if (doc.exists()) {
-      callback(doc.data() as AppConfig);
-    }
-  });
+  try {
+    return onSnapshot(doc(db, CONFIG_DOC), (snapshot) => {
+      if (snapshot.exists()) {
+        callback(snapshot.data() as AppConfig);
+      } else {
+        callback(DEFAULT_CONFIG);
+      }
+    }, (error) => {
+      console.warn("Erro ao escutar configurações no Firestore:", error);
+      callback(DEFAULT_CONFIG);
+    });
+  } catch (err) {
+    console.warn("Erro ao iniciar escuta de configurações:", err);
+    callback(DEFAULT_CONFIG);
+    return () => {};
+  }
 }
 
 export function subscribeToRegistrations(callback: (regs: Registration[]) => void) {
-  return onSnapshot(collection(db, REGISTRATIONS_COL), (snapshot) => {
-    const regs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
-    callback(regs);
-  });
+  try {
+    return onSnapshot(collection(db, REGISTRATIONS_COL), (snapshot) => {
+      const regs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
+      callback(regs);
+    }, (error) => {
+      console.warn("Erro ao escutar cadastros no Firestore:", error);
+      callback([]);
+    });
+  } catch (err) {
+    console.warn("Erro ao iniciar escuta de cadastros:", err);
+    callback([]);
+    return () => {};
+  }
 }
 
 export async function getRegistrationByCpf(cpf: string): Promise<Registration | null> {

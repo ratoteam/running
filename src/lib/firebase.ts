@@ -20,11 +20,15 @@ export const db = initializeFirestore(app, { experimentalForceLongPolling: true 
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 
-// Initialize analytics only if supported and in browser environment
-if (typeof window !== 'undefined') {
+// Initialize analytics safely if supported, in browser environment, and with valid measurementId
+if (typeof window !== 'undefined' && firebaseConfig.measurementId) {
   isSupported().then((supported) => {
     if (supported) {
-      getAnalytics(app);
+      try {
+        getAnalytics(app);
+      } catch (err) {
+        console.warn("Analytics error ignored:", err);
+      }
     }
-  }).catch(console.error);
+  }).catch(() => {});
 }

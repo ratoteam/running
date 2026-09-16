@@ -4,7 +4,7 @@ import { toast } from 'react-toastify';
 import { Logo } from '../components/Logo';
 import { Button, Input, Select } from '../components/ui';
 import { AppConfig, Registration } from '../types';
-import { getConfig, subscribeToConfig, subscribeToRegistrations, submitRegistration, initConfig, getRegistrationByCpf } from '../lib/db';
+import { getConfig, subscribeToConfig, subscribeToRegistrations, submitRegistration, initConfig, getRegistrationByCpf, DEFAULT_CONFIG } from '../lib/db';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { auth } from '../lib/firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
@@ -132,15 +132,27 @@ export default function RegistrationPage() {
   const cpfValue = watch('cpf');
 
   useEffect(() => {
-    initConfig().then(() => {
-      const unsubConfig = subscribeToConfig(setConfig);
-      const unsubRegs = subscribeToRegistrations(setRegistrations);
+    let unsubConfig = () => {};
+    let unsubRegs = () => {};
+
+    const safetyTimer = setTimeout(() => {
       setLoading(false);
-      return () => {
-        unsubConfig();
-        unsubRegs();
-      };
+      setConfig(prev => prev || DEFAULT_CONFIG);
+    }, 2000);
+
+    initConfig().catch(console.warn).finally(() => {
+      unsubConfig = subscribeToConfig((cfg) => {
+        setConfig(cfg);
+        setLoading(false);
+      });
+      unsubRegs = subscribeToRegistrations(setRegistrations);
     });
+
+    return () => {
+      clearTimeout(safetyTimer);
+      if (typeof unsubConfig === 'function') unsubConfig();
+      if (typeof unsubRegs === 'function') unsubRegs();
+    };
   }, []);
 
   useEffect(() => {

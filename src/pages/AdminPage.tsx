@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Button, Input } from '../components/ui';
 import { AppConfig, Registration, KitOption, ResultItem } from '../types';
-import { getConfig, subscribeToConfig, subscribeToRegistrations, updateConfig, clearAllRegistrations, importRegistrations, deleteRegistration, subscribeToResults, importResults, clearAllResults } from '../lib/db';
+import { getConfig, subscribeToConfig, subscribeToRegistrations, updateConfig, clearAllRegistrations, importRegistrations, deleteRegistration, subscribeToResults, importResults, clearAllResults, DEFAULT_CONFIG } from '../lib/db';
 import { auth, storage } from '../lib/firebase';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut, createUserWithEmailAndPassword } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -287,9 +287,23 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
+    const safetyTimer = setTimeout(() => {
+      setConfig(prev => {
+        if (!prev) {
+          setEditSizes(DEFAULT_CONFIG.tshirtSizes || {});
+          setEditKits(DEFAULT_CONFIG.kits || []);
+          setEditGenders(DEFAULT_CONFIG.genders || []);
+          setEditModalities(DEFAULT_CONFIG.modalities || []);
+          return DEFAULT_CONFIG;
+        }
+        return prev;
+      });
+    }, 2000);
+
     const unsubConfig = subscribeToConfig((cfg) => {
+      clearTimeout(safetyTimer);
       setConfig(cfg);
-      setEditSizes(cfg.tshirtSizes);
+      setEditSizes(cfg.tshirtSizes || {});
       
       setEditKits(cfg.kits || []);
       setEditGenders(cfg.genders || []);
@@ -302,16 +316,16 @@ export default function AdminPage() {
       unsubRegs = subscribeToRegistrations(setRegistrations);
       subscribeToResults((resData) => {
         setResultsList(resData);
-      }).then(unsub => { unsubRes = unsub; });
+      }).then(unsub => { unsubRes = unsub; }).catch(() => {});
     }
     return () => {
+      clearTimeout(safetyTimer);
       unsubConfig();
       if (isAuthenticated) {
         unsubRegs();
         if (typeof unsubRes === 'function') unsubRes();
       }
     };
-
   }, [isAuthenticated]);
 
   const handleAuth = async (e: React.FormEvent) => {
